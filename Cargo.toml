@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/rift-http-proxy"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Mohsen Zainalpour <zainalpour@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/EtaCassiopeia/rift"
