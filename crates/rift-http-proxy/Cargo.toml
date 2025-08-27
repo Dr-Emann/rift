@@ -1,0 +1,17 @@
+[package]
+name = "rift-http-proxy"
+version.workspace = true
+edition.workspace = true
+description = "High-performance HTTP proxy with fault injection"
+
+[[bin]]
+name = "rift-http-proxy"
+path = "src/main.rs"
+
+[lib]
+name = "rift_http_proxy"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1.41", features = ["full"] }
+clap = { version = "4.5", features = ["derive"] }
