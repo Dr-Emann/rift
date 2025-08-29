@@ -1,1 +1,1 @@
-//! Rift HTTP Proxy
+pub mod config;
