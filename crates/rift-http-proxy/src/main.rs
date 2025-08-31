@@ -1,6 +1,7 @@
 use clap::Parser;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+use rift_http_proxy::proxy::ProxyServer;
 
 #[derive(Parser, Debug)]
 #[command(name = "rift-http-proxy")]
@@ -23,13 +24,8 @@ async fn main() {
 
     info!("Starting Rift on port {}", args.port);
 
-    if let Some(config_path) = &args.config {
-        match rift_http_proxy::config::Config::load(config_path) {
-            Ok(config) => info!("Loaded config: {:?}", config),
-            Err(e) => tracing::error!("Failed to load config: {}", e),
-        }
+    let server = ProxyServer::new("0.0.0.0", args.port);
+    if let Err(e) = server.run().await {
+        tracing::error!("Server error: {}", e);
     }
-
-    tokio::signal::ctrl_c().await.ok();
-    info!("Shutting down");
 }
