@@ -1,0 +1,6 @@
+# Generated benchmark detailed output files (large)
+results/*_detailed.txt
+
+# Keep summary reports tracked
+!results/BENCHMARK_REPORT.md
+!results/results.csv

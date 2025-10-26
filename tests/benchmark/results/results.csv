@@ -1,0 +1,33 @@
+Test,MB_RPS,MB_Avg,MB_P50,MB_P99,Rift_RPS,Rift_Avg,Rift_P50,Rift_P99,Speedup
+Simple: Health Check,1914.1590,0.0261,in,in,39127.5441,0.0013,in,in,20.4
+Simple: Ping/Pong,1763.1616,0.0284,in,in,36391.9437,0.0014,in,in,20.6
+Admin: List Imposters,6361.9965,0.0079,in,in,29021.9876,0.0017,in,in,4.5
+Admin: Get Imposter,396.2859,0.1257,in,in,884.5531,0.0564,in,in,2.2
+API: First Stub Match,1865.9826,0.0268,in,in,33422.6712,0.0015,in,in,17.9
+API: Middle Stub Match,589.6590,0.0846,in,in,25512.0135,0.0020,in,in,43.2
+API: Last Stub Match,290.6818,0.1711,in,in,22042.2397,0.0023,in,in,75.8
+API: No Match (404),297.8424,0.1670,in,in,22664.5233,0.0022,in,in,76.0
+Regex: First Pattern,1560.5463,0.0320,in,in,7040.5822,0.0071,in,in,4.5
+Regex: Middle Pattern,118.9688,0.4149,in,in,257.4926,0.1930,in,in,2.1
+Regex: Last Pattern,65.2654,0.7491,in,in,130.6267,0.3782,in,in,2.0
+Complex: AND/OR Predicates,904.8538,0.0552,in,in,29322.6051,0.0017,in,in,32.4
+JSON: Body Equals (First),1794.0121,0.0279,in,in,29252.5034,0.0017,in,in,16.3
+JSON: Body Equals (Middle),1022.6158,0.0488,in,in,24052.8495,0.0021,in,in,23.5
+JSON: Body Contains,1272.2644,0.0393,in,in,24352.8136,0.0021,in,in,19.1
+JSONPath: First Match,107.5234,0.4588,in,in,26583.7153,0.0019,in,in,247.2
+JSONPath: Middle Match,129.8760,0.3805,in,in,28751.5887,0.0017,in,in,221.3
+JSONPath: Last Match,124.1842,0.3971,in,in,27070.2658,0.0018,in,in,217.9
+XPath: First Match,169.4493,0.2924,in,in,28745.0847,0.0017,in,in,169.6
+XPath: Middle Match,168.9096,0.2933,in,in,27234.6470,0.0018,in,in,161.2
+XPath: Last Match,173.8784,0.2851,in,in,27248.3339,0.0018,in,in,156.7
+Template: Simple,1856.1939,0.0269,in,in,26858.2333,0.0019,in,in,14.4
+Template: With Query,1349.4976,0.0370,in,in,28158.2180,0.0018,in,in,20.8
+Decorate: First,1759.0810,0.0284,in,in,6141.2078,0.0081,in,in,3.4
+Decorate: Middle,1640.8110,0.0304,in,in,5980.1804,0.0084,in,in,3.6
+Header: First Route,1763.2439,0.0283,in,in,27937.0178,0.0018,in,in,15.8
+Header: Middle Route,1199.3209,0.0416,in,in,29345.4356,0.0017,in,in,24.4
+Header: Last Route,843.0558,0.0592,in,in,28971.3764,0.0017,in,in,34.3
+Query: First Match,1787.0860,0.0280,in,in,28549.5096,0.0018,in,in,15.9
+Query: Middle Match,1143.3337,0.0437,in,in,24425.7665,0.0020,in,in,21.3
+Query: Last Match,801.7622,0.0622,in,in,21185.2385,0.0024,in,in,26.4
+Stress: 200 Concurrent,1830.6695,0.1091,in,in,29716.6817,0.0067,in,in,16.2
