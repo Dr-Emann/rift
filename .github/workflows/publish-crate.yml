@@ -1,0 +1,62 @@
+name: Publish Crate
+
+on:
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: 'Crate to publish (e.g., rift-http-proxy)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Perform a dry run (--dry-run)'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y libluajit-5.1-dev
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Verify crate exists
+        run: |
+          if [ ! -d "crates/${{ inputs.crate }}" ]; then
+            echo "Error: crate 'crates/${{ inputs.crate }}' does not exist"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: cargo test -p ${{ inputs.crate }}
+
+      - name: Check crate
+        run: cargo package -p ${{ inputs.crate }} --allow-dirty
+
+      - name: Publish (dry run)
+        if: ${{ inputs.dry_run }}
+        run: cargo publish -p ${{ inputs.crate }} --dry-run --allow-dirty
+
+      - name: Publish to crates.io
+        if: ${{ !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p ${{ inputs.crate }}

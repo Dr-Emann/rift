@@ -1,0 +1,131 @@
+# DISABLED: Benchmark directory was removed
+# This workflow is kept for reference but disabled
+# To re-enable, recreate benchmarks/Dockerfile.rift and uncomment triggers
+name: Build and Publish Benchmark Image (DISABLED)
+
+on:
+  # Disabled - uncomment to re-enable
+  # workflow_dispatch:
+  workflow_dispatch:
+    inputs:
+      placeholder:
+        description: 'This workflow is disabled. Benchmark directory was removed.'
+        required: false
+        default: 'disabled'
+
+env:
+  REGISTRY_DOCKERHUB: docker.io
+  REGISTRY_GHCR: ghcr.io
+  IMAGE_NAME: rift-benchmark
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for multi-arch builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_DOCKERHUB }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Disabled: GHCR deployment
+      # - name: Log in to GitHub Container Registry
+      #   if: github.event_name != 'pull_request'
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: ${{ env.REGISTRY_GHCR }}
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Determine version and build date
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=edge" >> $GITHUB_OUTPUT
+          fi
+          echo "BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_OUTPUT
+
+      # Build the base rift-http-proxy image first and push to registry
+      # This is needed because Dockerfile.rift depends on rift-http-proxy:local
+      - name: Build and push base rift-http-proxy image
+        id: build-base
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./crates/rift-http-proxy/Dockerfile.local-build
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/rift-proxy:${{ steps.vars.outputs.VERSION }}
+            ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/rift-proxy:latest
+          cache-from: type=gha,scope=rift-base
+          cache-to: type=gha,mode=max,scope=rift-base
+          build-args: |
+            VERSION=${{ steps.vars.outputs.VERSION }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.vars.outputs.BUILD_DATE }}
+
+      # Update Dockerfile.rift to use the published base image instead of local tag
+      - name: Prepare benchmark Dockerfile
+        run: |
+          sed -i 's|FROM rift-http-proxy:local|FROM ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/rift-proxy:${{ steps.vars.outputs.VERSION }}|' benchmarks/Dockerfile.rift
+
+      - name: Build and push benchmark image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./benchmarks/Dockerfile.rift
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=benchmark
+          cache-to: type=gha,mode=max,scope=benchmark
+          build-args: |
+            VERSION=${{ steps.vars.outputs.VERSION }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.vars.outputs.BUILD_DATE }}
+
+      # Disabled: GHCR attestation
+      # - name: Generate artifact attestation
+      #   if: github.event_name != 'pull_request'
+      #   uses: actions/attest-build-provenance@v1
+      #   with:
+      #     subject-name: ${{ env.REGISTRY_GHCR }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+      #     subject-digest: ${{ steps.build.outputs.digest }}
+      #     push-to-registry: true
