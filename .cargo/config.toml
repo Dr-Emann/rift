@@ -1,0 +1,18 @@
+# Cargo build configuration for M9 performance benchmarking
+
+[build]
+# Use native CPU features for maximum performance on local machine
+# NOTE: Binaries built with this flag are not portable across different CPUs
+rustflags = ["-C", "target-cpu=native"]
+
+[profile.release]
+# Disable incremental compilation for reproducible benchmark results
+incremental = false
+
+[target.x86_64-apple-darwin]
+# macOS-specific optimizations
+rustflags = ["-C", "target-cpu=native", "-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-apple-darwin]
+# Apple Silicon specific optimizations
+rustflags = ["-C", "target-cpu=native"]
