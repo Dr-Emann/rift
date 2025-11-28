@@ -66,8 +66,9 @@ jobs:
             features: lua,javascript,redis-backend
 
           # macOS ARM64 (Apple Silicon)
+          # Note: Using macos-14 because ring 0.17.14 doesn't support macos-15 ARM yet
           - target: aarch64-apple-darwin
-            os: macos-15
+            os: macos-14
             archive: tar.gz
             features: lua,javascript,redis-backend
 
