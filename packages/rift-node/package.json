@@ -1,5 +1,5 @@
 {
-  "name": "rift-node",
+  "name": "@rift-vs/rift",
   "version": "0.1.0",
   "description": "Mountebank-compatible Node.js bindings for Rift - A high-performance service virtualization proxy",
   "main": "dist/index.js",

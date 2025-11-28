@@ -6,7 +6,7 @@
  *
  * @example
  * ```javascript
- * import rift from 'rift-node';
+ * import rift from '@rift-vs/rift';
  *
  * const server = await rift.create({
  *   port: 2525,

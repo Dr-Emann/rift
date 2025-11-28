@@ -435,10 +435,10 @@ jobs:
         run: |
           echo "## npm Package Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Package:** rift-node" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** @rift-vs/rift" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Install with:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "npm install rift-node" >> $GITHUB_STEP_SUMMARY
+          echo "npm install @rift-vs/rift" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -1,4 +1,4 @@
-# rift-node
+# @rift-vs/rift
 
 Mountebank-compatible Node.js bindings for [Rift](https://github.com/EtaCassiopeia/rift) - a high-performance service virtualization and chaos engineering proxy written in Rust.
 
@@ -13,7 +13,7 @@ Mountebank-compatible Node.js bindings for [Rift](https://github.com/EtaCassiope
 ## Installation
 
 ```bash
-npm install rift-node
+npm install @rift-vs/rift
 ```
 
 The package automatically downloads the appropriate `rift-http-proxy` binary for your platform during installation.
@@ -54,7 +54,7 @@ The package will automatically find the `rift` or `mb` binary in your PATH.
 ### Basic Usage
 
 ```javascript
-import rift from 'rift-node';
+import rift from '@rift-vs/rift';
 
 // Start a Rift server (Mountebank-compatible)
 const server = await rift.create({
@@ -111,7 +111,7 @@ const server = await mb.create({
 **After (Rift):**
 
 ```javascript
-import rift from 'rift-node';
+import rift from '@rift-vs/rift';
 
 const server = await rift.create({
   port: 2525,
@@ -125,7 +125,7 @@ const server = await rift.create({
 Full TypeScript support is included:
 
 ```typescript
-import rift, { CreateOptions, RiftServer } from 'rift-node';
+import rift, { CreateOptions, RiftServer } from '@rift-vs/rift';
 
 const options: CreateOptions = {
   port: 2525,
