@@ -11,7 +11,7 @@ incremental = false
 
 [target.x86_64-apple-darwin]
 # macOS-specific optimizations
-rustflags = ["-C", "target-cpu=native", "-C", "link-arg=-fuse-ld=lld"]
+rustflags = ["-C", "target-cpu=native"]
 
 [target.aarch64-apple-darwin]
 # Apple Silicon specific optimizations
