@@ -142,13 +142,55 @@ rm -rf certs/  # Optional: remove generated certificates
 
 ---
 
+## Demo 3: Rift-Only Features (Fault Injection)
+
+Demonstrates Rift's probabilistic fault injection via the `_rift.fault` extension - not available in Mountebank.
+
+### Start
+
+```bash
+docker compose -f docker-compose-rift-features.yml up -d
+```
+
+### Test Fault Injection (Port 4547)
+
+```bash
+# Healthy baseline endpoint (no faults)
+curl http://localhost:4547/api/healthy
+
+# Random latency injection (500-2000ms, 100% probability)
+time curl http://localhost:4547/api/slow-random
+
+# Probabilistic latency (50% chance of 1s delay)
+time curl http://localhost:4547/api/sometimes-slow
+
+# Error injection (30% chance of 503)
+for i in {1..5}; do curl -w " [%{http_code}]\n" http://localhost:4547/api/flaky; done
+
+# Combined chaos (70% latency + 20% errors)
+time curl -w " [%{http_code}]\n" http://localhost:4547/api/chaos
+
+# TCP connection reset
+curl http://localhost:4547/api/tcp-reset
+```
+
+### Cleanup
+
+```bash
+docker compose -f docker-compose-rift-features.yml down
+```
+
+---
+
 ## Configuration Files
 
 | File | Description |
 |:-----|:------------|
 | `imposters.json` | Mountebank HTTP imposter config |
+| `imposters-rift-features.json` | Rift-only features demo config |
 | `docker-compose.yml` | HTTP demo |
 | `docker-compose-https.yml` | HTTPS/TLS demo |
+| `docker-compose-rift-features.yml` | Rift-only features demo |
 | `generate-certs.sh` | Certificate generation script |
 
 ---
