@@ -71,7 +71,7 @@ struct Cli {
     datadir: Option<PathBuf>,
 
     /// Allow JavaScript injection in responses (for inject and decorate)
-    #[arg(long, env = "MB_ALLOW_INJECTION")]
+    #[arg(long, visible_alias = "allowInjection", env = "MB_ALLOW_INJECTION")]
     allow_injection: bool,
 
     /// Only accept requests from localhost
