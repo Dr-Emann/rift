@@ -71,6 +71,13 @@ Generate responses with JavaScript:
 { "is": { "statusCode": 500 } }
 ```
 
+Status codes can also be specified as strings for compatibility with some tools:
+
+```json
+{ "is": { "statusCode": "200" } }
+{ "is": { "statusCode": "404" } }
+```
+
 ### Headers
 
 ```json
@@ -340,6 +347,52 @@ Use EJS templates for dynamic content:
   }
 }
 ```
+
+---
+
+## Alternative Formats
+
+Rift supports several alternative response formats for compatibility with various tools that generate Mountebank configurations.
+
+### proxy: null with is Response
+
+Some tools include `"proxy": null` alongside an `is` response. This is accepted and the null proxy is ignored:
+
+```json
+{
+  "responses": [{
+    "is": {
+      "statusCode": 200,
+      "body": "Hello"
+    },
+    "proxy": null
+  }]
+}
+```
+
+### Combined Alternative Format
+
+A complete example using multiple alternative formats:
+
+```json
+{
+  "responses": [{
+    "behaviors": [{ "wait": 100 }],
+    "is": {
+      "statusCode": "201",
+      "headers": { "Content-Type": "application/json" },
+      "body": "{\"created\": true}"
+    },
+    "proxy": null
+  }]
+}
+```
+
+This example shows:
+- `behaviors` without underscore prefix
+- `behaviors` as an array
+- `statusCode` as a string
+- `proxy: null` alongside `is`
 
 ---
 

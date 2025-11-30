@@ -73,6 +73,18 @@ Like `equals` but requires exact object structure (no extra fields):
 }
 ```
 
+Works on all request fields - useful for strict matching:
+
+```json
+{
+  "deepEquals": {
+    "method": "GET",
+    "path": "/api/users",
+    "body": ""
+  }
+}
+```
+
 ### contains
 
 Partial match - checks if value is contained:
@@ -85,6 +97,18 @@ Partial match - checks if value is contained:
   }
 }
 ```
+
+Match substring in query parameter values:
+
+```json
+{
+  "contains": {
+    "query": { "lenderIds": "Test" }
+  }
+}
+```
+
+This matches requests like `?lenderIds=TestUser` or `?lenderIds=MyTestValue`.
 
 ### startsWith
 
@@ -342,6 +366,25 @@ Exclude fields from matching:
   }
 }
 ```
+
+---
+
+## Multiple Predicates (Implicit AND)
+
+When you specify multiple predicates in a stub's `predicates` array, they are combined with implicit AND - all must match:
+
+```json
+{
+  "predicates": [
+    { "endsWith": { "path": "/lender-details" } },
+    { "contains": { "query": { "lenderIds": "ALL" } } },
+    { "deepEquals": { "method": "GET" } }
+  ],
+  "responses": [{ "is": { "statusCode": 200 } }]
+}
+```
+
+This matches GET requests to paths ending in `/lender-details` with query parameter `lenderIds` containing "ALL".
 
 ---
 

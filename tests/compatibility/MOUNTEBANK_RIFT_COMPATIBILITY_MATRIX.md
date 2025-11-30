@@ -4,6 +4,8 @@
 
 This document provides a comprehensive feature-by-feature comparison between Mountebank and Rift to identify what's needed for Rift to be a complete drop-in replacement.
 
+**Recent Updates**: Full alternative format support added for compatibility with various Mountebank configuration generators.
+
 ---
 
 ## 📊 Executive Summary
@@ -91,6 +93,58 @@ This document provides a comprehensive feature-by-feature comparison between Mou
 - ✅ CONNECTION_RESET_BY_PEER
 - ✅ RANDOM_DATA_THEN_CLOSE
 - ✅ Custom error simulation
+
+---
+
+## 🔄 Alternative Format Support
+
+Rift supports multiple JSON format variations to ensure compatibility with various tools that generate Mountebank configurations.
+
+### Imposter Configuration
+
+| Format Variation | Standard Format | Alternative Format | Status |
+|-----------------|-----------------|-------------------|--------|
+| **Port** | `"port": 4545` | Omitted (auto-assigned) | ✅ **Complete** |
+| **allowCORS** | `"allowCORS": true` | `"allowCORS": true` | ✅ **Complete** |
+| **service_name** | N/A | `"service_name": "..."` | ✅ **Complete** |
+| **service_info** | N/A | `"service_info": {...}` | ✅ **Complete** |
+
+### Stub Configuration
+
+| Format Variation | Standard Format | Alternative Format | Status |
+|-----------------|-----------------|-------------------|--------|
+| **scenarioName** | N/A | `"scenarioName": "..."` | ✅ **Complete** |
+
+### Response Configuration
+
+| Format Variation | Standard Format | Alternative Format | Status |
+|-----------------|-----------------|-------------------|--------|
+| **statusCode** | `"statusCode": 200` | `"statusCode": "200"` | ✅ **Complete** |
+| **behaviors** | `"_behaviors": {...}` | `"behaviors": {...}` | ✅ **Complete** |
+| **behaviors array** | `"_behaviors": {...}` | `"behaviors": [{...}]` | ✅ **Complete** |
+| **proxy null** | N/A | `"proxy": null` (ignored) | ✅ **Complete** |
+
+### Wait Behavior
+
+| Format Variation | Standard Format | Alternative Format | Status |
+|-----------------|-----------------|-------------------|--------|
+| **Fixed delay** | `"wait": 1000` | `"wait": 1000` | ✅ **Complete** |
+| **Inject object** | `"wait": {"inject": "..."}` | `"wait": "function() {...}"` | ✅ **Complete** |
+
+### Auto-Port Assignment
+
+When the `port` field is omitted, Rift automatically assigns an available port from the dynamic range (49152-65535):
+
+```json
+// Request
+POST /imposters
+{"protocol": "http", "stubs": [...]}
+
+// Response (201 Created)
+{"port": 49152, "protocol": "http", "stubs": [...]}
+```
+
+This matches Mountebank's behavior for automatic port assignment.
 
 ---
 
@@ -616,7 +670,9 @@ rules:
 
 ---
 
-**Last Updated**: 2025-11-24
+**Last Updated**: 2025-11-29
 **Test Status**: 126/126 scenarios passing (100%)
 **Rift Version**: Alpha
 **Mountebank Version**: 2.9.x compatible
+
+**Format Compatibility**: Full support for alternative formats used by configuration generators

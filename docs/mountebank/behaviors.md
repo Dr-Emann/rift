@@ -28,6 +28,35 @@ Behaviors are added to responses using `_behaviors`:
 }
 ```
 
+### Alternative Format: behaviors (without underscore)
+
+Some tools generate `behaviors` without the underscore prefix. Both formats are supported:
+
+```json
+{
+  "is": { "statusCode": 200 },
+  "behaviors": {
+    "wait": 1000
+  }
+}
+```
+
+### Alternative Format: behaviors as Array
+
+Behaviors can also be specified as an array of behavior objects:
+
+```json
+{
+  "is": { "statusCode": 200, "body": "Hello" },
+  "behaviors": [
+    { "wait": 100 },
+    { "decorate": "function(request, response) { response.body += ' World'; return response; }" }
+  ]
+}
+```
+
+When using array format, behaviors are merged into a single object. If the same behavior type appears multiple times, the last one takes precedence.
+
 ---
 
 ## wait
@@ -59,6 +88,20 @@ Adds exactly 2000ms delay.
 ```
 
 Returns random delay between 500-1500ms.
+
+### JavaScript Function String
+
+Some tools generate wait as a direct JavaScript function string:
+
+```json
+{
+  "behaviors": [{
+    "wait": " function() { var min = Math.ceil(0); var max = Math.floor(100); return Math.floor(Math.random() * (max - min + 1)) + min; } "
+  }]
+}
+```
+
+This format is supported and the function is evaluated to compute the delay.
 
 ### Use Cases
 

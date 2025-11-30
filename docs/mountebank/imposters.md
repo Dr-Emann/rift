@@ -55,15 +55,40 @@ curl -X POST http://localhost:2525/imposters \
 
 | Field | Type | Required | Description |
 |:------|:-----|:---------|:------------|
-| `port` | number | Yes | Port to listen on |
-| `protocol` | string | Yes | `http` or `https` |
+| `port` | number | No | Port to listen on (auto-assigned if omitted) |
+| `protocol` | string | No | `http` or `https` (default: `http`) |
 | `name` | string | No | Human-readable name |
 | `stubs` | array | No | Request/response mappings |
 | `defaultResponse` | object | No | Response when no stub matches |
 | `recordRequests` | boolean | No | Store requests for verification |
+| `allowCORS` | boolean | No | Enable CORS headers |
+| `service_name` | string | No | Service identifier for documentation |
+| `service_info` | object | No | Additional service metadata |
 | `key` | string | HTTPS only | PEM-encoded private key |
 | `cert` | string | HTTPS only | PEM-encoded certificate |
 | `mutualAuth` | boolean | No | Require client certificate |
+
+### Auto-Port Assignment
+
+If you omit the `port` field, Rift will automatically assign an available port from the dynamic range (49152-65535):
+
+```bash
+curl -X POST http://localhost:2525/imposters \
+  -H "Content-Type: application/json" \
+  -d '{
+    "protocol": "http",
+    "stubs": [{
+      "responses": [{ "is": { "statusCode": 200 } }]
+    }]
+  }'
+
+# Response includes the assigned port:
+{
+  "port": 49152,
+  "protocol": "http",
+  ...
+}
+```
 
 ---
 
@@ -83,6 +108,26 @@ Each stub contains predicates (matching rules) and responses:
       ]
     }
   ]
+}
+```
+
+### Stub Configuration
+
+| Field | Type | Required | Description |
+|:------|:-----|:---------|:------------|
+| `predicates` | array | No | Conditions to match requests |
+| `responses` | array | Yes | Responses to return |
+| `scenarioName` | string | No | Identifier for test scenarios |
+
+The `scenarioName` field is useful for organizing stubs into logical groups for testing:
+
+```json
+{
+  "stubs": [{
+    "scenarioName": "UserService-GetUser-Success",
+    "predicates": [{ "equals": { "path": "/users/123" } }],
+    "responses": [{ "is": { "statusCode": 200, "body": "{\"id\": 123}" } }]
+  }]
 }
 ```
 
