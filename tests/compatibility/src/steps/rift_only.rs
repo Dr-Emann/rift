@@ -46,13 +46,21 @@ async fn clear_rift_imposters(world: &mut CompatibilityWorld) {
 }
 
 #[given(expr = "an imposter on port {int} on Rift with:")]
-async fn create_rift_imposter(world: &mut CompatibilityWorld, _port: u16, step: &Step) {
+async fn create_rift_imposter(world: &mut CompatibilityWorld, port: u16, step: &Step) {
     let config = step.docstring().expect("Missing docstring").to_string();
+
+    // Apply port offset to the imposter config
+    // This is needed because get_imposter_url adds PORT_OFFSET when making requests
+    let mut json: serde_json::Value = serde_json::from_str(&config)
+        .expect("Invalid JSON in imposter config");
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert("port".to_string(), serde_json::json!(port + crate::world::PORT_OFFSET));
+    }
 
     world.client
         .post(format!("{}/imposters", world.config.rift_admin_url))
         .header("Content-Type", "application/json")
-        .body(config)
+        .body(json.to_string())
         .send()
         .await
         .expect("Failed to create Rift imposter");
