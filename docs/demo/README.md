@@ -238,6 +238,54 @@ docker compose -f docker-compose-scripting.yml down
 
 ---
 
+## Demo 5: Multi-Engine Scripting
+
+Demonstrates all three scripting engines (Rhai, Lua, JavaScript) with equivalent functionality.
+
+### Start
+
+```bash
+# Using local binary
+./target/release/rift --configfile docs/demo/imposters-scripting-engines.json
+
+# Or using Docker
+docker run -p 2525:2525 -p 4560:4560 \
+  -v $(pwd)/docs/demo/imposters-scripting-engines.json:/imposters.json:ro \
+  etacassiopeia/rift-proxy:latest --configfile /imposters.json
+```
+
+### Test All Engines (Port 4560)
+
+```bash
+# Health check - lists available engines
+curl http://localhost:4560/health
+
+# Rhai engine - counter with flow_store
+curl http://localhost:4560/rhai/counter
+curl http://localhost:4560/rhai/counter
+curl -X POST http://localhost:4560/rhai/echo
+
+# Lua engine - counter with flow_store
+curl http://localhost:4560/lua/counter
+curl http://localhost:4560/lua/counter
+curl -X POST http://localhost:4560/lua/echo
+
+# JavaScript engine - counter with state (Mountebank inject format)
+curl http://localhost:4560/js/counter
+curl http://localhost:4560/js/counter
+curl -X POST http://localhost:4560/js/echo
+```
+
+### Scripting Format Differences
+
+| Engine | Format | State Access | Request Access |
+|:-------|:-------|:-------------|:---------------|
+| Rhai | `_rift.script` | `flow_store.get(id, key)` | `request.method`, `request.path` |
+| Lua | `_rift.script` | `flow_store:get(id, key)` | `request.method`, `request.path` |
+| JavaScript | `inject` (Mountebank) | `state.key` | `config.request.method` |
+
+---
+
 ## Configuration Files
 
 | File | Description |
@@ -245,6 +293,7 @@ docker compose -f docker-compose-scripting.yml down
 | `imposters.json` | Mountebank HTTP imposter config |
 | `imposters-rift-features.json` | Fault injection demo config |
 | `imposters-scripting.json` | Scripting with flow state demo config |
+| `imposters-scripting-engines.json` | Multi-engine scripting demo (Rhai, Lua, JS) |
 | `docker-compose.yml` | HTTP demo |
 | `docker-compose-https.yml` | HTTPS/TLS demo |
 | `docker-compose-rift-features.yml` | Fault injection demo |
