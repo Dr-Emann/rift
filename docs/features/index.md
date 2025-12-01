@@ -25,7 +25,7 @@ Rift provides advanced features for service virtualization and chaos engineering
 ### Rift Extensions (`_rift` Namespace)
 
 - **Fault Injection** - Probabilistic latency, error, and TCP fault injection
-- **Scripting** - Rhai and Lua engines for lightweight scripting
+- **Scripting** - Rhai, Lua, and JavaScript engines for dynamic behavior
 - **Flow State** - Stateful scenarios with InMemory or Redis backends
 - **Metrics** - Prometheus integration
 

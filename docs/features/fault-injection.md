@@ -61,12 +61,7 @@ Rift enables fault injection for chaos engineering and resilience testing.
 {
   "stubs": [{
     "responses": [{
-      "inject": "function(request, state, logger) { \
-        if (Math.random() < 0.1) { \
-          return { statusCode: 500, body: 'Random failure' }; \
-        } \
-        return { statusCode: 200, body: 'Success' }; \
-      }"
+      "inject": "function(config) { if (Math.random() < 0.1) { return { statusCode: 500, body: 'Random failure' }; } return { statusCode: 200, body: 'Success' }; }"
     }]
   }]
 }
@@ -97,6 +92,21 @@ Rift enables fault injection for chaos engineering and resilience testing.
       }
     }]
   }]
+}
+```
+
+### Fixed Latency
+
+```json
+{
+  "_rift": {
+    "fault": {
+      "latency": {
+        "probability": 1.0,
+        "ms": 1000
+      }
+    }
+  }
 }
 ```
 
@@ -158,39 +168,38 @@ Simulate network-level failures:
 {
   "_rift": {
     "fault": {
-      "tcp": {
-        "probability": 0.05,
-        "type": "reset"
-      }
+      "tcp": "CONNECTION_RESET_BY_PEER"
     }
   }
 }
 ```
 
 TCP fault types:
-- `reset` - RST packet (connection reset)
-- `timeout` - Connection timeout
-- `close` - Close connection without response
+- `CONNECTION_RESET_BY_PEER` - RST packet (connection reset)
 
 ---
 
 ## Scripted Faults
 
-### Rhai Script
+For dynamic fault injection based on request data or state, use the scripting feature.
+
+### Rhai Script - Retry Simulation
+
+Fail the first 2 requests, pass through on the 3rd:
 
 ```json
 {
   "port": 4545,
   "protocol": "http",
   "_rift": {
-    "flowState": {"backend": "inmemory"}
+    "flowState": {"backend": "inmemory", "ttlSeconds": 300}
   },
   "stubs": [{
     "responses": [{
       "_rift": {
         "script": {
           "engine": "rhai",
-          "code": "let count = flow.get(\"counter\").unwrap_or(0); flow.set(\"counter\", count + 1); if count % 5 == 4 { #{ error_status: 500, error_body: \"Periodic failure\", inject: true } } else if request.path.contains(\"slow\") { #{ latency_ms: rand(100, 500), inject: true } } else { #{ inject: false } }"
+          "code": "let flow_id = request.headers.get(\"x-flow-id\"); if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.get(flow_id, \"attempts\"); if attempts == () { attempts = 0; }; attempts += 1; flow_store.set(flow_id, \"attempts\", attempts); if attempts <= 2 { #{inject: true, fault: \"error\", status: 503, body: `{\"error\":\"Temporary failure\",\"attempt\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\"}} } else { #{inject: false} }"
         }
       }
     }]
@@ -198,16 +207,71 @@ TCP fault types:
 }
 ```
 
-### Time-Based Faults
+### Lua Script - Rate Limiting
 
 ```json
 {
   "_rift": {
-    "script": {
-      "engine": "rhai",
-      "code": "let hour = timestamp().hour(); if hour >= 9 && hour <= 17 { #{ error_probability: 0.1, inject: true } } else { #{ inject: false } }"
-    }
-  }
+    "flowState": {"backend": "inmemory", "ttlSeconds": 60}
+  },
+  "stubs": [{
+    "responses": [{
+      "_rift": {
+        "script": {
+          "engine": "lua",
+          "code": "function should_inject_fault(request, flow_store)\n  local fid = 'ratelimit'\n  local count = flow_store:increment(fid, 'requests')\n  if count > 100 then\n    return {\n      inject = true,\n      fault = 'error',\n      status = 429,\n      body = '{\"error\":\"Rate limit exceeded\"}',\n      headers = {['Content-Type'] = 'application/json', ['Retry-After'] = '60'}\n    }\n  end\n  return {inject = false}\nend"
+        }
+      }
+    }]
+  }]
+}
+```
+
+### Script Return Values
+
+Scripts must return a map/table with an `inject` flag:
+
+**Rhai:**
+```rhai
+// No injection - pass through
+#{ inject: false }
+
+// Inject error
+#{
+  inject: true,
+  fault: "error",
+  status: 503,
+  body: "{\"error\": \"Service unavailable\"}",
+  headers: #{ "Content-Type": "application/json" }
+}
+
+// Inject latency
+#{
+  inject: true,
+  fault: "latency",
+  duration_ms: 500
+}
+```
+
+**Lua:**
+```lua
+-- No injection
+return { inject = false }
+
+-- Inject error
+return {
+  inject = true,
+  fault = "error",
+  status = 503,
+  body = '{"error": "Service unavailable"}',
+  headers = { ["Content-Type"] = "application/json" }
+}
+
+-- Inject latency
+return {
+  inject = true,
+  fault = "latency",
+  duration_ms = 500
 }
 ```
 
@@ -236,19 +300,22 @@ TCP fault types:
 
 ### Testing Retry Logic
 
+Use scripting to fail a specific number of requests before succeeding:
+
 ```json
 {
   "port": 4545,
   "protocol": "http",
   "_rift": {
-    "flowState": {"backend": "inmemory"}
+    "flowState": {"backend": "inmemory", "ttlSeconds": 300}
   },
   "stubs": [{
+    "predicates": [{ "equals": { "path": "/api/resource" } }],
     "responses": [{
       "_rift": {
         "script": {
           "engine": "rhai",
-          "code": "let key = \"attempt:\" + request.headers[\"X-Request-Id\"]; let attempts = flow.get(key).unwrap_or(0); flow.set(key, attempts + 1); flow.expire(key, 60); if attempts < 2 { #{ error_status: 503, inject: true } } else { #{ inject: false } }"
+          "code": "let flow_id = request.headers.get(\"x-request-id\"); if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.increment(flow_id, \"attempts\"); if attempts <= 2 { #{inject: true, fault: \"error\", status: 503, body: `{\"error\":\"Retry later\",\"attempt\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\", \"Retry-After\": \"1\"}} } else { #{inject: false} }"
         }
       }
     }]
@@ -258,13 +325,17 @@ TCP fault types:
 
 ### Testing Circuit Breaker
 
+Simulate random failures:
+
 ```json
 {
   "_rift": {
-    "flowState": {"backend": "inmemory"},
-    "script": {
-      "engine": "rhai",
-      "code": "let failures = flow.get(\"failure_count\").unwrap_or(0); if rand() < 0.5 { flow.set(\"failure_count\", failures + 1); #{ error_status: 500, inject: true } } else { flow.set(\"failure_count\", 0); #{ inject: false } }"
+    "fault": {
+      "error": {
+        "probability": 0.5,
+        "status": 500,
+        "body": "{\"error\": \"Service failure\"}"
+      }
     }
   }
 }
@@ -280,3 +351,4 @@ TCP fault types:
 4. **Monitor metrics** - Track fault injection rate and impact
 5. **Test in staging first** - Validate fault scenarios before production
 6. **Document scenarios** - Keep a runbook of chaos experiments
+7. **Use flow_id for isolation** - Namespace state by request/user ID to avoid cross-contamination
