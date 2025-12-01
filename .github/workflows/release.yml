@@ -43,6 +43,7 @@ jobs:
             os: ubuntu-22.04
             archive: tar.gz
             features: javascript,redis-backend
+            no_default_features: true
             cross: true
 
           # Linux x86_64 (musl - static binary)
@@ -50,6 +51,7 @@ jobs:
             os: ubuntu-22.04
             archive: tar.gz
             features: javascript,redis-backend
+            no_default_features: true
             cross: true
 
           # Linux ARM64 (musl - static binary)
@@ -57,6 +59,7 @@ jobs:
             os: ubuntu-22.04
             archive: tar.gz
             features: javascript,redis-backend
+            no_default_features: true
             cross: true
 
           # macOS x86_64 (Intel)
@@ -76,6 +79,7 @@ jobs:
             os: windows-latest
             archive: zip
             features: javascript,redis-backend
+            no_default_features: true
 
     steps:
       - name: Checkout
@@ -141,11 +145,17 @@ jobs:
       - name: Build release binary
         shell: bash
         run: |
+          # Build feature flags
+          FEATURE_FLAGS="--features ${{ matrix.features }}"
+          if [ "${{ matrix.no_default_features }}" = "true" ]; then
+            FEATURE_FLAGS="--no-default-features $FEATURE_FLAGS"
+          fi
+
           if [[ "${{ matrix.target }}" == *"musl"* ]]; then
             # Use cross for musl targets (provides proper toolchain in Docker)
-            cross build --release --package rift-http-proxy --target ${{ matrix.target }} --features ${{ matrix.features }}
+            cross build --release --package rift-http-proxy --target ${{ matrix.target }} $FEATURE_FLAGS
           else
-            cargo build --release --package rift-http-proxy --target ${{ matrix.target }} --features ${{ matrix.features }}
+            cargo build --release --package rift-http-proxy --target ${{ matrix.target }} $FEATURE_FLAGS
           fi
 
       # Package
