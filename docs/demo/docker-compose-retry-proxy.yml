@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  # Rift proxy with retry simulation
+  rift:
+    image: etacassiopeia/rift-proxy:latest
+    ports:
+      - "2525:2525"   # Admin API
+      - "4560:4560"   # Retry proxy imposter
+    volumes:
+      - ./imposters-retry-proxy.json:/imposters.json:ro
+    command: ["--configfile", "/imposters.json", "--loglevel", "debug"]
+    depends_on:
+      - upstream
+
+  # Simple upstream service that returns success
+  upstream:
+    image: hashicorp/http-echo:latest
+    command: ["-text", "{\"status\":\"success\",\"message\":\"Request reached upstream service\",\"timestamp\":\"$(date -Iseconds)\"}"]
+    ports:
+      - "8080:5678"

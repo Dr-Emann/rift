@@ -1,0 +1,86 @@
+{
+  "imposters": [
+    {
+      "port": 4560,
+      "protocol": "http",
+      "name": "Retry Proxy Simulation",
+      "recordRequests": true,
+      "_rift": {
+        "flowState": {
+          "backend": "inmemory",
+          "ttlSeconds": 300
+        }
+      },
+      "stubs": [
+        {
+          "name": "Retry Simulation - Fail first 2 requests, pass 3rd to upstream",
+          "predicates": [
+            {
+              "equals": {
+                "path": "/api/resource"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "_rift": {
+                "script": {
+                  "engine": "rhai",
+                  "code": "let flow_id = request.headers.get(\"x-flow-id\"); if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.get(flow_id, \"attempts\"); if attempts == () { attempts = 0; }; attempts += 1; flow_store.set(flow_id, \"attempts\", attempts); if attempts <= 2 { #{ inject: true, fault: \"error\", status: 503, body: `{\"error\":\"Service temporarily unavailable\",\"attempt\":${attempts},\"message\":\"Retry after a moment\"}`, headers: #{\"Content-Type\": \"application/json\", \"Retry-After\": \"1\", \"X-Attempt\": `${attempts}`} } } else { #{ inject: false } }"
+                }
+              },
+              "_behaviors": {
+                "proxy": {
+                  "to": "http://upstream:8080",
+                  "mode": "proxyAlways"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reset attempts counter",
+          "predicates": [
+            {
+              "equals": {
+                "method": "DELETE",
+                "path": "/api/reset"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "_rift": {
+                "script": {
+                  "engine": "rhai",
+                  "code": "let flow_id = request.headers.get(\"x-flow-id\"); if flow_id == () { flow_id = \"default\"; }; flow_store.delete(flow_id, \"attempts\"); #{ inject: true, fault: \"error\", status: 200, body: `{\"message\":\"Counter reset for flow: ${flow_id}\"}`, headers: #{\"Content-Type\": \"application/json\"} }"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get current attempt count",
+          "predicates": [
+            {
+              "equals": {
+                "method": "GET",
+                "path": "/api/attempts"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "_rift": {
+                "script": {
+                  "engine": "rhai",
+                  "code": "let flow_id = request.headers.get(\"x-flow-id\"); if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.get(flow_id, \"attempts\"); if attempts == () { attempts = 0; }; #{ inject: true, fault: \"error\", status: 200, body: `{\"flow_id\":\"${flow_id}\",\"attempts\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\"} }"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -13,89 +13,57 @@ Rift supports multiple scripting engines for dynamic behavior.
 
 ## Available Engines
 
-| Engine | Feature | Use Case |
-|:-------|:--------|:---------|
-| **JavaScript** | Built-in | Mountebank-compatible injection responses |
-| **Rhai** | `_rift.script` | Lightweight fault logic |
-| **Lua** | `_rift.script` | High-performance scripting |
+| Engine | Format | Use Case |
+|:-------|:-------|:---------|
+| **JavaScript** | `inject` response | Mountebank-compatible injection responses |
+| **Rhai** | `_rift.script` | Lightweight fault logic with flow state |
+| **Lua** | `_rift.script` | High-performance scripting with flow state |
 
 ---
 
 ## JavaScript (Mountebank Inject)
 
+JavaScript uses the standard Mountebank `inject` response format for compatibility.
+
 ### Injection Responses
 
 ```json
 {
-  "inject": "function(request, state, logger) { \
-    return { \
-      statusCode: 200, \
-      headers: { 'Content-Type': 'application/json' }, \
-      body: JSON.stringify({ path: request.path, timestamp: Date.now() }) \
-    }; \
-  }"
+  "responses": [{
+    "inject": "function(config) { return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: config.request.path, timestamp: Date.now() }) }; }"
+  }]
 }
 ```
 
 ### Request Object
 
 ```javascript
-request.method      // "GET", "POST", etc.
-request.path        // "/api/users/123"
-request.query       // { page: "1", limit: "10" }
-request.headers     // { "content-type": "application/json" }
-request.body        // Request body (string or parsed object)
+config.request.method      // "GET", "POST", etc.
+config.request.path        // "/api/users/123"
+config.request.query       // { page: "1", limit: "10" }
+config.request.headers     // { "content-type": "application/json" }
+config.request.body        // Request body (string or parsed object)
 ```
 
 ### State Object
 
-Persist data across requests:
+Persist data across requests within the same imposter:
 
 ```javascript
-function(request, state, logger) {
+function(config, state) {
   // Initialize or increment counter
   state.counter = (state.counter || 0) + 1;
 
   // Store user-specific data
-  var userId = request.headers['X-User-Id'];
+  var userId = config.request.headers['X-User-Id'];
   state.users = state.users || {};
   state.users[userId] = { lastSeen: Date.now() };
 
   return {
     statusCode: 200,
-    body: { requestNumber: state.counter }
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestNumber: state.counter })
   };
-}
-```
-
-### Logger Object
-
-```javascript
-function(request, state, logger) {
-  logger.debug("Processing request: " + request.path);
-  logger.info("User ID: " + request.headers['X-User-Id']);
-  logger.warn("Deprecated endpoint called");
-  logger.error("Something went wrong");
-
-  return { statusCode: 200 };
-}
-```
-
-### Decorate Behavior
-
-```json
-{
-  "_behaviors": {
-    "decorate": "function(request, response) { \
-      response.headers = response.headers || {}; \
-      response.headers['X-Processed-By'] = 'Rift'; \
-      response.headers['X-Request-Id'] = request.headers['X-Request-Id'] || 'unknown'; \
-      if (typeof response.body === 'object') { \
-        response.body.serverTime = new Date().toISOString(); \
-      } \
-      return response; \
-    }"
-  }
 }
 ```
 
@@ -103,7 +71,7 @@ function(request, state, logger) {
 
 ## Rhai (`_rift.script`)
 
-Rhai is a lightweight embedded scripting language optimized for Rust.
+Rhai is a lightweight embedded scripting language optimized for Rust. Scripts are defined inline and have access to `request` and `flow_store` objects.
 
 ### Basic Script
 
@@ -112,14 +80,14 @@ Rhai is a lightweight embedded scripting language optimized for Rust.
   "port": 4545,
   "protocol": "http",
   "_rift": {
-    "flowState": {"backend": "inmemory"}
+    "flowState": {"backend": "inmemory", "ttlSeconds": 600}
   },
   "stubs": [{
     "responses": [{
       "_rift": {
         "script": {
           "engine": "rhai",
-          "code": "let path = request.path; if path.contains(\"admin\") { #{ latency_ms: 100, inject: true } } else { #{ inject: false } }"
+          "code": "let count = flow_store.get(\"demo\", \"counter\"); if count == () { count = 0; }; count += 1; flow_store.set(\"demo\", \"counter\", count); #{inject: true, fault: \"error\", status: 200, body: `{\"count\":${count}}`, headers: #{\"Content-Type\": \"application/json\"}}"
         }
       }
     }]
@@ -131,72 +99,71 @@ Rhai is a lightweight embedded scripting language optimized for Rust.
 
 ```rhai
 // Request information
-request.path        // String: "/api/users"
-request.method      // String: "GET"
-request.headers     // Map: { "content-type": "application/json" }
-request.query       // Map: { "page": "1" }
-request.body        // String: request body
+request.method          // String: "GET", "POST", etc.
+request.path            // String: "/api/users"
+request.headers         // Map: access via request.headers["header-name"]
+request.query           // Map: access via request.query["param"]
+request.pathParams      // Map: access via request.pathParams["id"]
+request.body            // Parsed JSON body
 
-// Random functions
-rand()              // Float: 0.0 to 1.0
-rand(min, max)      // Integer: min to max (inclusive)
-
-// Time functions
-timestamp()         // Current timestamp
-timestamp().hour()  // Current hour (0-23)
-timestamp().minute() // Current minute (0-59)
+// Helper functions
+timestamp_header()      // RFC 1123 formatted timestamp for HTTP Date header
 ```
 
-### Flow State
+### Flow Store
+
+Flow store provides persistent state across requests. All methods require a `flow_id` parameter to namespace state.
 
 ```rhai
-// Get value (returns Option)
-let value = flow.get("key");
-let count = flow.get("counter").unwrap_or(0);
+// Get value (returns () if not set)
+let value = flow_store.get("flow-id", "key");
+let count = flow_store.get("flow-id", "counter");
+if count == () { count = 0; };
 
 // Set value
-flow.set("key", "value");
-flow.set("counter", count + 1);
+flow_store.set("flow-id", "key", "value");
+flow_store.set("flow-id", "counter", count + 1);
 
-// Set with expiration (seconds)
-flow.set("temp_key", "value");
-flow.expire("temp_key", 60);
-
-// Delete value
-flow.delete("key");
+// Increment counter (returns new value)
+let attempts = flow_store.increment("flow-id", "attempts");
 
 // Check existence
-if flow.exists("key") {
-  // ...
+if flow_store.exists("flow-id", "key") {
+  // key exists
 }
+
+// Delete value
+flow_store.delete("flow-id", "key");
+
+// Set TTL for entire flow (seconds)
+flow_store.set_ttl("flow-id", 300);
 ```
 
 ### Return Values
 
+Scripts must return a map with an `inject` flag:
+
 ```rhai
-// Inject latency
-#{
-  latency_ms: 500,
-  inject: true
-}
-
-// Inject error
-#{
-  error_status: 500,
-  error_body: "Service unavailable",
-  error_headers: #{ "Retry-After": "30" },
-  inject: true
-}
-
-// No injection
+// No injection (pass through to next response or upstream)
 #{ inject: false }
 
-// Combined
+// Inject error response
 #{
-  latency_ms: 200,
-  error_probability: 0.1,
-  error_status: 503,
-  inject: true
+  inject: true,
+  fault: "error",
+  status: 503,
+  body: "{\"error\": \"Service unavailable\"}",
+  headers: #{
+    "Content-Type": "application/json",
+    "Retry-After": "30"
+  }
+}
+
+// Inject latency
+#{
+  inject: true,
+  fault: "latency",
+  duration_ms: 500
 }
 ```
 
@@ -204,7 +171,7 @@ if flow.exists("key") {
 
 ## Lua (`_rift.script`)
 
-Lua provides high-performance scripting with pre-compiled bytecode.
+Lua provides high-performance scripting. Scripts must define a `should_inject_fault(request, flow_store)` function.
 
 ### Basic Script
 
@@ -213,14 +180,14 @@ Lua provides high-performance scripting with pre-compiled bytecode.
   "port": 4545,
   "protocol": "http",
   "_rift": {
-    "flowState": {"backend": "inmemory"}
+    "flowState": {"backend": "inmemory", "ttlSeconds": 600}
   },
   "stubs": [{
     "responses": [{
       "_rift": {
         "script": {
           "engine": "lua",
-          "code": "local path = request.path; if string.find(path, 'slow') then return { latency_ms = 1000, inject = true } end; return { inject = false }"
+          "code": "function should_inject_fault(request, flow_store)\n  local fid = 'lua'\n  local count = flow_store:get(fid, 'count') or 0\n  count = count + 1\n  flow_store:set(fid, 'count', count)\n  return {\n    inject = true,\n    fault = 'error',\n    status = 200,\n    body = '{\"count\":' .. count .. '}',\n    headers = {['Content-Type'] = 'application/json'}\n  }\nend"
         }
       }
     }]
@@ -231,45 +198,74 @@ Lua provides high-performance scripting with pre-compiled bytecode.
 ### Available Variables
 
 ```lua
--- Request information
-request.path        -- String
-request.method      -- String
-request.headers     -- Table
-request.query       -- Table
-request.body        -- String
+-- Request information (passed as first argument)
+request.method          -- String
+request.path            -- String
+request.headers         -- Table: request.headers["header-name"]
+request.query           -- Table: request.query["param"]
+request.pathParams      -- Table: request.pathParams["id"]
+request.body            -- Parsed body (table or string)
 
--- Random
-math.random()       -- Float 0.0 to 1.0
-math.random(n)      -- Integer 1 to n
-math.random(m, n)   -- Integer m to n
-
--- Time
-os.time()           -- Unix timestamp
-os.date("*t")       -- Date table with hour, min, sec, etc.
+-- Standard Lua functions
+math.random()           -- Float 0.0 to 1.0
+math.random(n)          -- Integer 1 to n
+math.random(m, n)       -- Integer m to n
+os.time()               -- Unix timestamp
+os.date("*t")           -- Date table
 ```
 
-### Flow State
+### Flow Store
+
+Lua uses colon syntax for method calls:
 
 ```lua
--- Get value
-local value = flow.get("key")
-local count = flow.get("counter") or 0
+-- Get value (returns nil if not set)
+local value = flow_store:get("flow-id", "key")
+local count = flow_store:get("flow-id", "counter") or 0
 
 -- Set value
-flow.set("key", "value")
-flow.set("counter", count + 1)
+flow_store:set("flow-id", "key", "value")
+flow_store:set("flow-id", "counter", count + 1)
 
--- Set with expiration
-flow.set("temp", "value")
-flow.expire("temp", 60)
+-- Increment counter (returns new value)
+local attempts = flow_store:increment("flow-id", "attempts")
 
--- Delete
-flow.delete("key")
-
--- Exists
-if flow.exists("key") then
-  -- ...
+-- Check existence
+if flow_store:exists("flow-id", "key") then
+  -- key exists
 end
+
+-- Delete value
+flow_store:delete("flow-id", "key")
+
+-- Set TTL for entire flow (seconds)
+flow_store:set_ttl("flow-id", 300)
+```
+
+### Return Values
+
+```lua
+-- No injection
+return { inject = false }
+
+-- Inject error response
+return {
+  inject = true,
+  fault = "error",
+  status = 503,
+  body = '{"error": "Service unavailable"}',
+  headers = {
+    ["Content-Type"] = "application/json",
+    ["Retry-After"] = "30"
+  }
+}
+
+-- Inject latency
+return {
+  inject = true,
+  fault = "latency",
+  duration_ms = 500
+}
 ```
 
 ---
@@ -281,46 +277,105 @@ end
 ```json
 {
   "_rift": {
-    "script": {
-      "engine": "rhai",
-      "code": "let user_id = request.headers[\"X-User-Id\"]; let key = \"rate:\" + user_id; let count = flow.get(key).unwrap_or(0); flow.set(key, count + 1); flow.expire(key, 60); if count > 100 { #{ error_status: 429, error_body: \"{\\\"error\\\": \\\"Rate limit exceeded\\\"}\", inject: true } } else { #{ inject: false } }"
-    }
-  }
+    "flowState": {"backend": "inmemory", "ttlSeconds": 60}
+  },
+  "stubs": [{
+    "responses": [{
+      "_rift": {
+        "script": {
+          "engine": "rhai",
+          "code": "let fid = \"ratelimit\"; let count = flow_store.get(fid, \"requests\"); if count == () { count = 0; }; count += 1; flow_store.set(fid, \"requests\", count); if count > 100 { #{inject: true, fault: \"error\", status: 429, body: `{\"error\":\"Rate limit exceeded\",\"count\":${count}}`, headers: #{\"Content-Type\": \"application/json\", \"Retry-After\": \"60\"}} } else { #{inject: false} }"
+        }
+      }
+    }]
+  }]
 }
 ```
 
-### A/B Testing
+### Retry Simulation (Fail First N Requests)
 
 ```json
 {
   "_rift": {
-    "script": {
-      "engine": "rhai",
-      "code": "let user_id = request.headers[\"X-User-Id\"]; let bucket_key = \"ab_bucket:\" + user_id; let bucket = flow.get(bucket_key); if bucket == () { bucket = if rand() < 0.5 { \"A\" } else { \"B\" }; flow.set(bucket_key, bucket); }; if bucket == \"A\" { #{ latency_ms: 0, inject: true } } else { #{ latency_ms: 100, inject: true } }"
-    }
-  }
+    "flowState": {"backend": "inmemory", "ttlSeconds": 300}
+  },
+  "stubs": [{
+    "responses": [{
+      "_rift": {
+        "script": {
+          "engine": "rhai",
+          "code": "let flow_id = request.headers.get(\"x-flow-id\"); if flow_id == () { flow_id = \"default\"; }; let attempts = flow_store.get(flow_id, \"attempts\"); if attempts == () { attempts = 0; }; attempts += 1; flow_store.set(flow_id, \"attempts\", attempts); if attempts <= 2 { #{inject: true, fault: \"error\", status: 503, body: `{\"error\":\"Temporary failure\",\"attempt\":${attempts}}`, headers: #{\"Content-Type\": \"application/json\"}} } else { #{inject: false} }"
+        }
+      }
+    }]
+  }]
 }
 ```
 
-### Retry Simulation
+### Counter with Multiple Endpoints
 
 ```json
 {
   "_rift": {
-    "script": {
-      "engine": "rhai",
-      "code": "let request_id = request.headers[\"X-Request-Id\"]; let attempt_key = \"attempt:\" + request_id; let attempts = flow.get(attempt_key).unwrap_or(0); flow.set(attempt_key, attempts + 1); flow.expire(attempt_key, 300); if attempts < 2 { #{ error_status: 503, error_body: \"Temporary failure\", inject: true } } else { #{ inject: false } }"
+    "flowState": {"backend": "inmemory", "ttlSeconds": 600}
+  },
+  "stubs": [
+    {
+      "predicates": [{"equals": {"method": "POST", "path": "/api/counter/increment"}}],
+      "responses": [{
+        "_rift": {
+          "script": {
+            "engine": "rhai",
+            "code": "let fid = \"demo\"; let counter = flow_store.get(fid, \"counter\"); if counter == () { counter = 0; }; counter += 1; flow_store.set(fid, \"counter\", counter); #{inject: true, fault: \"error\", status: 200, body: `{\"counter\":${counter}}`, headers: #{\"Content-Type\": \"application/json\"}}"
+          }
+        }
+      }]
+    },
+    {
+      "predicates": [{"equals": {"method": "GET", "path": "/api/counter"}}],
+      "responses": [{
+        "_rift": {
+          "script": {
+            "engine": "rhai",
+            "code": "let fid = \"demo\"; let counter = flow_store.get(fid, \"counter\"); if counter == () { counter = 0; }; #{inject: true, fault: \"error\", status: 200, body: `{\"counter\":${counter}}`, headers: #{\"Content-Type\": \"application/json\"}}"
+          }
+        }
+      }]
+    },
+    {
+      "predicates": [{"equals": {"method": "DELETE", "path": "/api/counter"}}],
+      "responses": [{
+        "_rift": {
+          "script": {
+            "engine": "rhai",
+            "code": "let fid = \"demo\"; flow_store.delete(fid, \"counter\"); #{inject: true, fault: \"error\", status: 200, body: \"{\\\"message\\\":\\\"Counter reset\\\"}\", headers: #{\"Content-Type\": \"application/json\"}}"
+          }
+        }
+      }]
     }
-  }
+  ]
 }
 ```
 
 ---
 
+## Engine Comparison
+
+| Feature | JavaScript | Rhai | Lua |
+|:--------|:-----------|:-----|:----|
+| Format | `inject` response | `_rift.script` | `_rift.script` |
+| State access | `state.key` | `flow_store.get(id, key)` | `flow_store:get(id, key)` |
+| Flow isolation | Per imposter | Per flow_id | Per flow_id |
+| Function wrapper | None needed | None needed | Requires `should_inject_fault` |
+| Performance | Good | Excellent | Excellent |
+| Mountebank compatible | Yes | No | No |
+
+---
+
 ## Performance Tips
 
-1. **Prefer Rhai/Lua over JavaScript** for high-throughput scenarios
-2. **Pre-compute values** outside request path when possible
-3. **Use flow state sparingly** - each access has overhead
-4. **Keep scripts simple** - complex logic is harder to debug
-5. **Use logging judiciously** - excessive logging impacts performance
+1. **Use Rhai/Lua for high-throughput** - Both are compiled and cached for efficient reuse
+2. **Minimize flow store access** - Each get/set has overhead; batch operations when possible
+3. **Keep scripts simple** - Complex logic is harder to debug and maintain
+4. **Use flow_id wisely** - Namespace state by request ID, user ID, or session to avoid collisions
+5. **Set appropriate TTLs** - Prevent unbounded state growth with `ttlSeconds` config
