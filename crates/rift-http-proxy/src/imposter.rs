@@ -415,6 +415,15 @@ fn default_status_code() -> u16 {
     200
 }
 
+/// Path rewrite configuration for proxy responses (Mountebank compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathRewrite {
+    /// Pattern to match in the path (string to replace)
+    pub from: String,
+    /// Replacement string
+    pub to: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyResponse {
@@ -429,6 +438,9 @@ pub struct ProxyResponse {
     pub inject_headers: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_decorate_behavior: Option<String>,
+    /// Path rewrite configuration for transforming the request path before proxying
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_rewrite: Option<PathRewrite>,
 }
 
 /// Configuration for creating an imposter
@@ -1987,15 +1999,29 @@ impl Imposter {
         info!("Proxy config - addDecorateBehavior: {:?}, addWaitBehavior: {}, predicateGenerators: {:?}",
             proxy_config.add_decorate_behavior, proxy_config.add_wait_behavior, proxy_config.predicate_generators);
 
-        // Build the proxy URL
+        // Build the proxy URL, applying path rewrite if configured
+        let original_path = uri.path();
+        let rewritten_path = if let Some(ref rewrite) = proxy_config.path_rewrite {
+            original_path.replacen(&rewrite.from, &rewrite.to, 1)
+        } else {
+            original_path.to_string()
+        };
+
         let target_url = format!(
             "{}{}{}",
             proxy_config.to,
-            uri.path(),
+            rewritten_path,
             uri.query().map(|q| format!("?{q}")).unwrap_or_default()
         );
 
-        debug!("Proxy request to: {}", target_url);
+        if proxy_config.path_rewrite.is_some() {
+            debug!(
+                "Proxy request to: {} (path rewritten from '{}')",
+                target_url, original_path
+            );
+        } else {
+            debug!("Proxy request to: {}", target_url);
+        }
 
         // Create request signature for recording
         let signature = RequestSignature::new(method, uri.path(), uri.query(), &[]);
