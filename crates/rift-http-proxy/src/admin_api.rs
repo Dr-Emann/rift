@@ -274,6 +274,11 @@ async fn handle_imposter_routes(
             handle_replace_all_stubs(port, req, base_url, manager).await
         }
 
+        // GET /imposters/:port/stubs - Get all stubs
+        (&Method::GET, ["imposters", _, "stubs"]) => {
+            handle_get_all_stubs(port, base_url, manager).await
+        }
+
         // PUT /imposters/:port/stubs/:index - Replace specific stub
         (&Method::PUT, ["imposters", _, "stubs", index_str]) => {
             let index: usize = match index_str.parse() {
@@ -758,6 +763,36 @@ async fn handle_get_stub(
         Err(ImposterError::StubIndexOutOfBounds(i)) => {
             error_response(StatusCode::NOT_FOUND, &format!("Stub index {i} not found"))
         }
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+/// GET /imposters/:port/stubs - Get all stubs for an imposter
+async fn handle_get_all_stubs(
+    port: u16,
+    base_url: &str,
+    manager: Arc<ImposterManager>,
+) -> Response<Full<Bytes>> {
+    match manager.get_imposter(port) {
+        Ok(imposter) => {
+            let stubs = imposter.get_stubs();
+            let stubs_with_links: Vec<StubWithLinks> = stubs
+                .into_iter()
+                .enumerate()
+                .map(|(index, stub)| StubWithLinks {
+                    stub,
+                    links: make_stub_links(base_url, port, index),
+                })
+                .collect();
+            json_response(
+                StatusCode::OK,
+                &serde_json::json!({ "stubs": stubs_with_links }),
+            )
+        }
+        Err(ImposterError::NotFound(_)) => error_response(
+            StatusCode::NOT_FOUND,
+            &format!("Imposter not found on port {port}"),
+        ),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
