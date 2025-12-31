@@ -285,10 +285,6 @@ pub fn predicate_matches(
                 form,
             )
         }),
-        PredicateOperation::InjectJs(_) => {
-            warn!("inject predicate is not implemented");
-            false
-        }
     }
 }
 

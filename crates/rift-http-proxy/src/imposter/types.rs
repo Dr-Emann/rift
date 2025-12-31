@@ -152,8 +152,7 @@ pub enum PredicateOperation {
     Not(Box<Predicate>),
     Or(Vec<Predicate>),
     And(Vec<Predicate>),
-    #[serde(rename = "inject")]
-    InjectJs(String),
+    // TODO: "inject" predicate operation is missing
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
