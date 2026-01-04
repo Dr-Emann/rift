@@ -282,6 +282,9 @@ pub struct FieldPredicate {
     pub predicate: StringPredicate,
     /// Optional regex pattern to strip from values before matching (Mountebank `except` parameter)
     pub except: Option<Regex>,
+    /// Optional selector for extracting values before matching (jsonpath/xpath)
+    /// Only applicable to body field
+    pub selector: Option<ValueSelector>,
 }
 
 impl FieldPredicate {
@@ -290,6 +293,7 @@ impl FieldPredicate {
         Self {
             predicate,
             except: None,
+            selector: None,
         }
     }
 
@@ -298,10 +302,35 @@ impl FieldPredicate {
         Self {
             predicate,
             except: Some(except),
+            selector: None,
+        }
+    }
+
+    /// Create a FieldPredicate with a selector.
+    pub fn with_selector(predicate: StringPredicate, selector: ValueSelector) -> Self {
+        Self {
+            predicate,
+            except: None,
+            selector: Some(selector),
+        }
+    }
+
+    /// Create a FieldPredicate with both except and selector.
+    pub fn with_except_and_selector(
+        predicate: StringPredicate,
+        except: Regex,
+        selector: ValueSelector,
+    ) -> Self {
+        Self {
+            predicate,
+            except: Some(except),
+            selector: Some(selector),
         }
     }
 
     /// Match a value, applying except pattern if present.
+    ///
+    /// Note: Selector extraction should be done before calling this method.
     #[inline]
     pub fn matches(&self, value: &str) -> bool {
         match &self.except {
@@ -331,17 +360,23 @@ pub enum ValueSelector {
 ///
 /// This structure groups all predicates by the field they operate on (body, path, etc.),
 /// allowing for better cache locality and optimization opportunities.
+///
+/// # Selector Handling
+///
+/// For body predicates with selectors (jsonpath/xpath), each unique selector requires
+/// a separate extraction and match. Predicates with the same selector can be optimized
+/// together. Therefore, body is stored as a Vec to support multiple predicates with
+/// different selectors.
 #[derive(Debug, Clone)]
 pub struct OptimizedPredicates {
     /// Predicate for the HTTP method field
     pub method: Option<FieldPredicate>,
     /// Predicate for the path field
     pub path: Option<FieldPredicate>,
-    /// Predicate for the body field (may have selector for extraction)
-    pub body: Option<FieldPredicate>,
-    /// Optional selector for extracting body values (jsonpath/xpath)
-    /// Applied before body predicate matching
-    pub body_selector: Option<ValueSelector>,
+    /// Predicates for the body field
+    /// Multiple predicates support different selectors (jsonpath/xpath)
+    /// Predicates with the same selector should be grouped together during optimization
+    pub body: Vec<FieldPredicate>,
     /// Predicates for specific query parameters
     /// Key is the query parameter name
     pub query: Vec<(String, FieldPredicate)>,
@@ -362,8 +397,7 @@ impl OptimizedPredicates {
         Self {
             method: None,
             path: None,
-            body: None,
-            body_selector: None,
+            body: Vec::new(),
             query: Vec::new(),
             headers: Vec::new(),
             request_from: None,
@@ -412,11 +446,11 @@ impl OptimizedPredicates {
             }
         }
 
-        // Check body (with optional selector for value extraction)
-        if let Some(pred) = &self.body {
-            let body_str = body.unwrap_or("");
+        // Check body predicates (each may have its own selector for value extraction)
+        let body_str = body.unwrap_or("");
+        for pred in &self.body {
             // Apply selector if present to extract the value to match against
-            let value_to_match = match &self.body_selector {
+            let value_to_match = match &pred.selector {
                 Some(ValueSelector::JsonPath(selector)) => {
                     // Extract using jsonpath
                     // TODO: Implement jsonpath extraction
@@ -496,8 +530,7 @@ impl OptimizedPredicates {
     pub fn is_empty(&self) -> bool {
         self.method.is_none()
             && self.path.is_none()
-            && self.body.is_none()
-            && self.body_selector.is_none()
+            && self.body.is_empty()
             && self.query.is_empty()
             && self.headers.is_empty()
             && self.request_from.is_none()

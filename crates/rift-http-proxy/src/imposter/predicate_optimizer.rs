@@ -127,22 +127,40 @@ impl StringPredicateBuilder {
     }
 }
 
-/// Builder for a FieldPredicate (StringPredicate + except pattern).
+/// Builder for a FieldPredicate (StringPredicate + except pattern + selector).
 #[derive(Debug, Default)]
 struct FieldPredicateBuilder {
     string_pred: StringPredicateBuilder,
     except_pattern: Option<String>,
+    selector: Option<PredicateSelector>,
 }
 
 impl FieldPredicateBuilder {
     fn build(self) -> Result<FieldPredicate, regex::Error> {
         let pred = self.string_pred.build()?;
-        match self.except_pattern {
-            Some(pattern) => {
+
+        // Convert PredicateSelector to ValueSelector if present
+        let value_selector = self.selector.map(|s| match s {
+            PredicateSelector::JsonPath { selector } => ValueSelector::JsonPath(selector),
+            PredicateSelector::XPath { selector, namespaces } => ValueSelector::XPath {
+                selector,
+                namespaces,
+            },
+        });
+
+        match (self.except_pattern, value_selector) {
+            (Some(pattern), Some(selector)) => {
+                let except_regex = Regex::new(&pattern)?;
+                Ok(FieldPredicate::with_except_and_selector(pred, except_regex, selector))
+            }
+            (Some(pattern), None) => {
                 let except_regex = Regex::new(&pattern)?;
                 Ok(FieldPredicate::with_except(pred, except_regex))
             }
-            None => Ok(FieldPredicate::new(pred)),
+            (None, Some(selector)) => {
+                Ok(FieldPredicate::with_selector(pred, selector))
+            }
+            (None, None) => Ok(FieldPredicate::new(pred)),
         }
     }
 
@@ -153,6 +171,32 @@ impl FieldPredicateBuilder {
             && self.string_pred.equals.is_none()
             && self.string_pred.regexes.is_empty()
             && self.except_pattern.is_none()
+            && self.selector.is_none()
+    }
+}
+
+/// Key for grouping body predicates by selector.
+///
+/// Body predicates with the same selector can be optimized together,
+/// but predicates with different selectors must be kept separate.
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+enum BodySelectorKey {
+    NoSelector,
+    JsonPath(String),
+    XPath(String), // Just use selector string for key, ignore namespaces for grouping
+}
+
+impl From<&Option<PredicateSelector>> for BodySelectorKey {
+    fn from(selector: &Option<PredicateSelector>) -> Self {
+        match selector {
+            None => BodySelectorKey::NoSelector,
+            Some(PredicateSelector::JsonPath { selector }) => {
+                BodySelectorKey::JsonPath(selector.clone())
+            }
+            Some(PredicateSelector::XPath { selector, .. }) => {
+                BodySelectorKey::XPath(selector.clone())
+            }
+        }
     }
 }
 
@@ -161,8 +205,9 @@ impl FieldPredicateBuilder {
 struct FieldBuilders {
     method: FieldPredicateBuilder,
     path: FieldPredicateBuilder,
-    body: FieldPredicateBuilder,
-    body_selector: Option<PredicateSelector>,
+    /// Body builders grouped by selector
+    /// Each unique selector gets its own builder for optimization
+    body: HashMap<BodySelectorKey, FieldPredicateBuilder>,
     query: HashMap<String, FieldPredicateBuilder>,
     headers: HashMap<String, FieldPredicateBuilder>,
     request_from: FieldPredicateBuilder,
@@ -185,16 +230,13 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
         } else {
             Some(predicate.parameters.except.clone())
         };
-
-        // Store selector if present (only applicable to body field)
-        if let Some(ref selector) = predicate.parameters.selector {
-            builders.body_selector = Some(selector.clone());
-        }
+        let selector = predicate.parameters.selector.clone();
 
         process_predicate_operation(
             &predicate.operation,
             case_sensitive,
             except_pattern,
+            selector,
             &mut builders,
         )?;
     }
@@ -211,21 +253,13 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
         } else {
             None
         },
-        body: if !builders.body.is_empty() {
-            Some(builders.body.build()?)
-        } else {
-            None
-        },
-        body_selector: builders.body_selector.map(|s| match s {
-            PredicateSelector::JsonPath { selector } => ValueSelector::JsonPath(selector),
-            PredicateSelector::XPath {
-                selector,
-                namespaces,
-            } => ValueSelector::XPath {
-                selector,
-                namespaces,
-            },
-        }),
+        // Build all body predicates (one per unique selector)
+        body: builders
+            .body
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(_, v)| v.build())
+            .collect::<Result<Vec<_>, regex::Error>>()?,
         query: builders
             .query
             .into_iter()
@@ -259,6 +293,7 @@ fn process_predicate_operation(
     operation: &PredicateOperation,
     case_sensitive: bool,
     except_pattern: Option<String>,
+    selector: Option<PredicateSelector>,
     builders: &mut FieldBuilders,
 ) -> Result<(), regex::Error> {
     match operation {
@@ -267,6 +302,7 @@ fn process_predicate_operation(
                 fields,
                 case_sensitive,
                 except_pattern.as_ref(),
+                selector.as_ref(),
                 builders,
                 |builder, value, cs| {
                     builder.string_pred.add_equals(value, cs);
@@ -278,6 +314,7 @@ fn process_predicate_operation(
                 fields,
                 case_sensitive,
                 except_pattern.as_ref(),
+                selector.as_ref(),
                 builders,
                 |builder, value, cs| {
                     builder.string_pred.add_contains(value, cs);
@@ -289,6 +326,7 @@ fn process_predicate_operation(
                 fields,
                 case_sensitive,
                 except_pattern.as_ref(),
+                selector.as_ref(),
                 builders,
                 |builder, value, cs| {
                     builder.string_pred.add_starts_with(value, cs);
@@ -300,6 +338,7 @@ fn process_predicate_operation(
                 fields,
                 case_sensitive,
                 except_pattern.as_ref(),
+                selector.as_ref(),
                 builders,
                 |builder, value, cs| {
                     builder.string_pred.add_ends_with(value, cs);
@@ -311,6 +350,7 @@ fn process_predicate_operation(
                 fields,
                 case_sensitive,
                 except_pattern.as_ref(),
+                selector.as_ref(),
                 builders,
                 |builder, value, _cs| {
                     builder.string_pred.add_regex(value);
@@ -326,10 +366,12 @@ fn process_predicate_operation(
                 } else {
                     Some(child.parameters.except.clone())
                 };
+                let child_selector = child.parameters.selector.clone().or_else(|| selector.clone());
                 process_predicate_operation(
                     &child.operation,
                     child_case_sensitive,
                     child_except,
+                    child_selector,
                     builders,
                 )?;
             }
@@ -361,6 +403,7 @@ fn process_fields<F>(
     fields: &HashMap<String, serde_json::Value>,
     case_sensitive: bool,
     except_pattern: Option<&String>,
+    selector: Option<&PredicateSelector>,
     builders: &mut FieldBuilders,
     mut add_to_builder: F,
 ) -> Result<(), regex::Error>
@@ -387,10 +430,17 @@ where
                 add_to_builder(&mut builders.path, value_str, case_sensitive);
             }
             "body" => {
+                // Group body predicates by selector
+                let selector_key = BodySelectorKey::from(&selector.cloned());
+                let builder = builders.body.entry(selector_key).or_default();
+
                 if let Some(except) = except_pattern {
-                    builders.body.except_pattern = Some(except.clone());
+                    builder.except_pattern = Some(except.clone());
                 }
-                add_to_builder(&mut builders.body, value_str, case_sensitive);
+                if let Some(sel) = selector {
+                    builder.selector = Some(sel.clone());
+                }
+                add_to_builder(builder, value_str, case_sensitive);
             }
             "requestFrom" => {
                 if let Some(except) = except_pattern {
