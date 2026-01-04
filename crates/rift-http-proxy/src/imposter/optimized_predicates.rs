@@ -30,7 +30,7 @@
 //! 3. Use optimized string search (memmem) for contains operations
 //! 4. Improve cache locality
 
-use regex::RegexSet;
+use regex::{Regex, RegexSet};
 use std::borrow::Cow;
 
 /// A string with optional case-insensitive matching.
@@ -272,6 +272,61 @@ impl StringPredicate {
     }
 }
 
+/// Field-level preprocessing and matching.
+///
+/// Wraps a StringPredicate with optional preprocessing like `except` patterns
+/// and value extraction via jsonpath/xpath selectors.
+#[derive(Debug, Clone)]
+pub struct FieldPredicate {
+    /// The string matching predicate
+    pub predicate: StringPredicate,
+    /// Optional regex pattern to strip from values before matching (Mountebank `except` parameter)
+    pub except: Option<Regex>,
+}
+
+impl FieldPredicate {
+    /// Create a new FieldPredicate with just the predicate (no preprocessing).
+    pub fn new(predicate: StringPredicate) -> Self {
+        Self {
+            predicate,
+            except: None,
+        }
+    }
+
+    /// Create a FieldPredicate with an except pattern.
+    pub fn with_except(predicate: StringPredicate, except: Regex) -> Self {
+        Self {
+            predicate,
+            except: Some(except),
+        }
+    }
+
+    /// Match a value, applying except pattern if present.
+    #[inline]
+    pub fn matches(&self, value: &str) -> bool {
+        match &self.except {
+            Some(except) => {
+                // Strip the except pattern and match against the result
+                let processed = except.replace_all(value, "");
+                self.predicate.matches(&processed)
+            }
+            None => self.predicate.matches(value),
+        }
+    }
+}
+
+/// Selector for extracting values before matching (jsonpath or xpath).
+#[derive(Debug, Clone)]
+pub enum ValueSelector {
+    /// JsonPath selector
+    JsonPath(String),
+    /// XPath selector (with optional namespaces)
+    XPath {
+        selector: String,
+        namespaces: Option<std::collections::HashMap<String, String>>,
+    },
+}
+
 /// Optimized predicates organized by field.
 ///
 /// This structure groups all predicates by the field they operate on (body, path, etc.),
@@ -279,23 +334,26 @@ impl StringPredicate {
 #[derive(Debug, Clone)]
 pub struct OptimizedPredicates {
     /// Predicate for the HTTP method field
-    pub method: Option<StringPredicate>,
+    pub method: Option<FieldPredicate>,
     /// Predicate for the path field
-    pub path: Option<StringPredicate>,
-    /// Predicate for the body field
-    pub body: Option<StringPredicate>,
+    pub path: Option<FieldPredicate>,
+    /// Predicate for the body field (may have selector for extraction)
+    pub body: Option<FieldPredicate>,
+    /// Optional selector for extracting body values (jsonpath/xpath)
+    /// Applied before body predicate matching
+    pub body_selector: Option<ValueSelector>,
     /// Predicates for specific query parameters
     /// Key is the query parameter name
-    pub query: Vec<(String, StringPredicate)>,
+    pub query: Vec<(String, FieldPredicate)>,
     /// Predicates for specific headers
     /// Key is the header name (lowercase for case-insensitive matching)
-    pub headers: Vec<(String, StringPredicate)>,
+    pub headers: Vec<(String, FieldPredicate)>,
     /// Predicate for requestFrom field
-    pub request_from: Option<StringPredicate>,
+    pub request_from: Option<FieldPredicate>,
     /// Predicate for ip field
-    pub ip: Option<StringPredicate>,
+    pub ip: Option<FieldPredicate>,
     /// Predicates for form fields
-    pub form: Vec<(String, StringPredicate)>,
+    pub form: Vec<(String, FieldPredicate)>,
 }
 
 impl OptimizedPredicates {
@@ -305,6 +363,7 @@ impl OptimizedPredicates {
             method: None,
             path: None,
             body: None,
+            body_selector: None,
             query: Vec::new(),
             headers: Vec::new(),
             request_from: None,
@@ -353,10 +412,26 @@ impl OptimizedPredicates {
             }
         }
 
-        // Check body
+        // Check body (with optional selector for value extraction)
         if let Some(pred) = &self.body {
             let body_str = body.unwrap_or("");
-            if !pred.matches(body_str) {
+            // Apply selector if present to extract the value to match against
+            let value_to_match = match &self.body_selector {
+                Some(ValueSelector::JsonPath(selector)) => {
+                    // Extract using jsonpath
+                    // TODO: Implement jsonpath extraction
+                    // For now, use the full body
+                    body_str
+                }
+                Some(ValueSelector::XPath { selector, .. }) => {
+                    // Extract using xpath
+                    // TODO: Implement xpath extraction
+                    // For now, use the full body
+                    body_str
+                }
+                None => body_str,
+            };
+            if !pred.matches(value_to_match) {
                 return false;
             }
         }
@@ -422,6 +497,7 @@ impl OptimizedPredicates {
         self.method.is_none()
             && self.path.is_none()
             && self.body.is_none()
+            && self.body_selector.is_none()
             && self.query.is_empty()
             && self.headers.is_empty()
             && self.request_from.is_none()
@@ -564,7 +640,22 @@ mod tests {
     #[test]
     fn test_optimized_predicates_not_empty() {
         let mut pred = OptimizedPredicates::new();
-        pred.method = Some(StringPredicate::empty_simple());
+        pred.method = Some(FieldPredicate::new(StringPredicate::empty_simple()));
         assert!(!pred.is_empty());
+    }
+
+    #[test]
+    fn test_field_predicate_with_except() {
+        let pred = StringPredicate::empty_simple()
+            .with_equals(MaybeSensitiveStr::new("Hello World".to_string(), true));
+
+        // Without except - doesn't match
+        let field_pred = FieldPredicate::new(pred.clone());
+        assert!(!field_pred.matches("Hello123 World456"));
+
+        // With except - strips digits and matches
+        let except_regex = Regex::new(r"\d+").unwrap();
+        let field_pred_with_except = FieldPredicate::with_except(pred, except_regex);
+        assert!(field_pred_with_except.matches("Hello123 World456"));
     }
 }

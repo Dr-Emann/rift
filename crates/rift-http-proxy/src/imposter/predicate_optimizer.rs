@@ -3,9 +3,11 @@
 //! This module provides conversion from the Mountebank predicate format (organized per-type)
 //! to our optimized per-field format that enables better cache locality and RegexSet optimization.
 
-use super::optimized_predicates::{MaybeSensitiveStr, OptimizedPredicates, StringPredicate};
-use super::types::{Predicate, PredicateOperation};
-use regex::RegexSet;
+use super::optimized_predicates::{
+    FieldPredicate, MaybeSensitiveStr, OptimizedPredicates, StringPredicate, ValueSelector,
+};
+use super::types::{Predicate, PredicateOperation, PredicateSelector};
+use regex::{Regex, RegexSet};
 use std::collections::HashMap;
 
 /// A builder for constructing StringPredicates from multiple predicate operations.
@@ -125,17 +127,47 @@ impl StringPredicateBuilder {
     }
 }
 
+/// Builder for a FieldPredicate (StringPredicate + except pattern).
+#[derive(Debug, Default)]
+struct FieldPredicateBuilder {
+    string_pred: StringPredicateBuilder,
+    except_pattern: Option<String>,
+}
+
+impl FieldPredicateBuilder {
+    fn build(self) -> Result<FieldPredicate, regex::Error> {
+        let pred = self.string_pred.build()?;
+        match self.except_pattern {
+            Some(pattern) => {
+                let except_regex = Regex::new(&pattern)?;
+                Ok(FieldPredicate::with_except(pred, except_regex))
+            }
+            None => Ok(FieldPredicate::new(pred)),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.string_pred.starts_with.is_none()
+            && self.string_pred.ends_with.is_none()
+            && self.string_pred.contains.is_empty()
+            && self.string_pred.equals.is_none()
+            && self.string_pred.regexes.is_empty()
+            && self.except_pattern.is_none()
+    }
+}
+
 /// Per-field builders for constructing optimized predicates.
 #[derive(Debug, Default)]
 struct FieldBuilders {
-    method: StringPredicateBuilder,
-    path: StringPredicateBuilder,
-    body: StringPredicateBuilder,
-    query: HashMap<String, StringPredicateBuilder>,
-    headers: HashMap<String, StringPredicateBuilder>,
-    request_from: StringPredicateBuilder,
-    ip: StringPredicateBuilder,
-    form: HashMap<String, StringPredicateBuilder>,
+    method: FieldPredicateBuilder,
+    path: FieldPredicateBuilder,
+    body: FieldPredicateBuilder,
+    body_selector: Option<PredicateSelector>,
+    query: HashMap<String, FieldPredicateBuilder>,
+    headers: HashMap<String, FieldPredicateBuilder>,
+    request_from: FieldPredicateBuilder,
+    ip: FieldPredicateBuilder,
+    form: HashMap<String, FieldPredicateBuilder>,
 }
 
 /// Convert Mountebank predicates to optimized per-field format.
@@ -148,41 +180,52 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
     // Process each predicate and add to appropriate field builders
     for predicate in predicates {
         let case_sensitive = predicate.parameters.case_sensitive.unwrap_or(false);
-        process_predicate_operation(&predicate.operation, case_sensitive, &mut builders)?;
+        let except_pattern = if predicate.parameters.except.is_empty() {
+            None
+        } else {
+            Some(predicate.parameters.except.clone())
+        };
+
+        // Store selector if present (only applicable to body field)
+        if let Some(ref selector) = predicate.parameters.selector {
+            builders.body_selector = Some(selector.clone());
+        }
+
+        process_predicate_operation(
+            &predicate.operation,
+            case_sensitive,
+            except_pattern,
+            &mut builders,
+        )?;
     }
 
     // Build final optimized predicates
     Ok(OptimizedPredicates {
-        method: if builders.method.starts_with.is_some()
-            || builders.method.ends_with.is_some()
-            || !builders.method.contains.is_empty()
-            || builders.method.equals.is_some()
-            || !builders.method.regexes.is_empty()
-        {
+        method: if !builders.method.is_empty() {
             Some(builders.method.build()?)
         } else {
             None
         },
-        path: if builders.path.starts_with.is_some()
-            || builders.path.ends_with.is_some()
-            || !builders.path.contains.is_empty()
-            || builders.path.equals.is_some()
-            || !builders.path.regexes.is_empty()
-        {
+        path: if !builders.path.is_empty() {
             Some(builders.path.build()?)
         } else {
             None
         },
-        body: if builders.body.starts_with.is_some()
-            || builders.body.ends_with.is_some()
-            || !builders.body.contains.is_empty()
-            || builders.body.equals.is_some()
-            || !builders.body.regexes.is_empty()
-        {
+        body: if !builders.body.is_empty() {
             Some(builders.body.build()?)
         } else {
             None
         },
+        body_selector: builders.body_selector.map(|s| match s {
+            PredicateSelector::JsonPath { selector } => ValueSelector::JsonPath(selector),
+            PredicateSelector::XPath {
+                selector,
+                namespaces,
+            } => ValueSelector::XPath {
+                selector,
+                namespaces,
+            },
+        }),
         query: builders
             .query
             .into_iter()
@@ -193,22 +236,12 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
             .into_iter()
             .map(|(k, v)| Ok((k, v.build()?)))
             .collect::<Result<Vec<_>, regex::Error>>()?,
-        request_from: if builders.request_from.starts_with.is_some()
-            || builders.request_from.ends_with.is_some()
-            || !builders.request_from.contains.is_empty()
-            || builders.request_from.equals.is_some()
-            || !builders.request_from.regexes.is_empty()
-        {
+        request_from: if !builders.request_from.is_empty() {
             Some(builders.request_from.build()?)
         } else {
             None
         },
-        ip: if builders.ip.starts_with.is_some()
-            || builders.ip.ends_with.is_some()
-            || !builders.ip.contains.is_empty()
-            || builders.ip.equals.is_some()
-            || !builders.ip.regexes.is_empty()
-        {
+        ip: if !builders.ip.is_empty() {
             Some(builders.ip.build()?)
         } else {
             None
@@ -225,39 +258,80 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
 fn process_predicate_operation(
     operation: &PredicateOperation,
     case_sensitive: bool,
+    except_pattern: Option<String>,
     builders: &mut FieldBuilders,
 ) -> Result<(), regex::Error> {
     match operation {
         PredicateOperation::Equals(fields) => {
-            process_fields(fields, case_sensitive, builders, |builder, value, cs| {
-                builder.add_equals(value, cs);
-            })?;
+            process_fields(
+                fields,
+                case_sensitive,
+                except_pattern.as_ref(),
+                builders,
+                |builder, value, cs| {
+                    builder.string_pred.add_equals(value, cs);
+                },
+            )?;
         }
         PredicateOperation::Contains(fields) => {
-            process_fields(fields, case_sensitive, builders, |builder, value, cs| {
-                builder.add_contains(value, cs);
-            })?;
+            process_fields(
+                fields,
+                case_sensitive,
+                except_pattern.as_ref(),
+                builders,
+                |builder, value, cs| {
+                    builder.string_pred.add_contains(value, cs);
+                },
+            )?;
         }
         PredicateOperation::StartsWith(fields) => {
-            process_fields(fields, case_sensitive, builders, |builder, value, cs| {
-                builder.add_starts_with(value, cs);
-            })?;
+            process_fields(
+                fields,
+                case_sensitive,
+                except_pattern.as_ref(),
+                builders,
+                |builder, value, cs| {
+                    builder.string_pred.add_starts_with(value, cs);
+                },
+            )?;
         }
         PredicateOperation::EndsWith(fields) => {
-            process_fields(fields, case_sensitive, builders, |builder, value, cs| {
-                builder.add_ends_with(value, cs);
-            })?;
+            process_fields(
+                fields,
+                case_sensitive,
+                except_pattern.as_ref(),
+                builders,
+                |builder, value, cs| {
+                    builder.string_pred.add_ends_with(value, cs);
+                },
+            )?;
         }
         PredicateOperation::Matches(fields) => {
-            process_fields(fields, case_sensitive, builders, |builder, value, _cs| {
-                builder.add_regex(value);
-            })?;
+            process_fields(
+                fields,
+                case_sensitive,
+                except_pattern.as_ref(),
+                builders,
+                |builder, value, _cs| {
+                    builder.string_pred.add_regex(value);
+                },
+            )?;
         }
         PredicateOperation::And(children) => {
             // AND predicates naturally combine by adding to the same field builders
             for child in children {
                 let child_case_sensitive = child.parameters.case_sensitive.unwrap_or(case_sensitive);
-                process_predicate_operation(&child.operation, child_case_sensitive, builders)?;
+                let child_except = if child.parameters.except.is_empty() {
+                    except_pattern.clone()
+                } else {
+                    Some(child.parameters.except.clone())
+                };
+                process_predicate_operation(
+                    &child.operation,
+                    child_case_sensitive,
+                    child_except,
+                    builders,
+                )?;
             }
         }
         PredicateOperation::Or(_children) => {
@@ -286,11 +360,12 @@ fn process_predicate_operation(
 fn process_fields<F>(
     fields: &HashMap<String, serde_json::Value>,
     case_sensitive: bool,
+    except_pattern: Option<&String>,
     builders: &mut FieldBuilders,
     mut add_to_builder: F,
 ) -> Result<(), regex::Error>
 where
-    F: FnMut(&mut StringPredicateBuilder, String, bool),
+    F: FnMut(&mut FieldPredicateBuilder, String, bool),
 {
     for (field_name, value) in fields {
         let value_str = match value {
@@ -299,11 +374,36 @@ where
         };
 
         match field_name.as_str() {
-            "method" => add_to_builder(&mut builders.method, value_str, case_sensitive),
-            "path" => add_to_builder(&mut builders.path, value_str, case_sensitive),
-            "body" => add_to_builder(&mut builders.body, value_str, case_sensitive),
-            "requestFrom" => add_to_builder(&mut builders.request_from, value_str, case_sensitive),
-            "ip" => add_to_builder(&mut builders.ip, value_str, case_sensitive),
+            "method" => {
+                if let Some(except) = except_pattern {
+                    builders.method.except_pattern = Some(except.clone());
+                }
+                add_to_builder(&mut builders.method, value_str, case_sensitive);
+            }
+            "path" => {
+                if let Some(except) = except_pattern {
+                    builders.path.except_pattern = Some(except.clone());
+                }
+                add_to_builder(&mut builders.path, value_str, case_sensitive);
+            }
+            "body" => {
+                if let Some(except) = except_pattern {
+                    builders.body.except_pattern = Some(except.clone());
+                }
+                add_to_builder(&mut builders.body, value_str, case_sensitive);
+            }
+            "requestFrom" => {
+                if let Some(except) = except_pattern {
+                    builders.request_from.except_pattern = Some(except.clone());
+                }
+                add_to_builder(&mut builders.request_from, value_str, case_sensitive);
+            }
+            "ip" => {
+                if let Some(except) = except_pattern {
+                    builders.ip.except_pattern = Some(except.clone());
+                }
+                add_to_builder(&mut builders.ip, value_str, case_sensitive);
+            }
             "query" => {
                 // Query is an object with parameter names as keys
                 if let Some(obj) = value.as_object() {
@@ -313,6 +413,9 @@ where
                             _ => param_value.to_string(),
                         };
                         let builder = builders.query.entry(param_name.clone()).or_default();
+                        if let Some(except) = except_pattern {
+                            builder.except_pattern = Some(except.clone());
+                        }
                         add_to_builder(builder, param_value_str, case_sensitive);
                     }
                 }
@@ -330,6 +433,9 @@ where
                             .headers
                             .entry(header_name.to_lowercase())
                             .or_default();
+                        if let Some(except) = except_pattern {
+                            builder.except_pattern = Some(except.clone());
+                        }
                         add_to_builder(builder, header_value_str, case_sensitive);
                     }
                 }
@@ -343,6 +449,9 @@ where
                             _ => form_value.to_string(),
                         };
                         let builder = builders.form.entry(form_name.clone()).or_default();
+                        if let Some(except) = except_pattern {
+                            builder.except_pattern = Some(except.clone());
+                        }
                         add_to_builder(builder, form_value_str, case_sensitive);
                     }
                 }
