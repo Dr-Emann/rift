@@ -363,45 +363,50 @@ pub enum ValueSelector {
 ///
 /// # Selector Handling
 ///
-/// For body predicates with selectors (jsonpath/xpath), each unique selector requires
+/// For predicates with selectors (jsonpath/xpath), each unique selector requires
 /// a separate extraction and match. Predicates with the same selector can be optimized
-/// together. Therefore, body is stored as a Vec to support multiple predicates with
-/// different selectors.
+/// together. Therefore, all fields that can have selectors are stored as Vec to support
+/// multiple predicates with different selectors.
 #[derive(Debug, Clone)]
 pub struct OptimizedPredicates {
-    /// Predicate for the HTTP method field
-    pub method: Option<FieldPredicate>,
-    /// Predicate for the path field
-    pub path: Option<FieldPredicate>,
+    /// Predicates for the HTTP method field
+    /// Vec supports multiple predicates with different selectors
+    pub method: Vec<FieldPredicate>,
+    /// Predicates for the path field
+    /// Vec supports multiple predicates with different selectors
+    pub path: Vec<FieldPredicate>,
     /// Predicates for the body field
-    /// Multiple predicates support different selectors (jsonpath/xpath)
-    /// Predicates with the same selector should be grouped together during optimization
+    /// Vec supports multiple predicates with different selectors (jsonpath/xpath)
+    /// Predicates with the same selector are grouped together during optimization
     pub body: Vec<FieldPredicate>,
     /// Predicates for specific query parameters
-    /// Key is the query parameter name
-    pub query: Vec<(String, FieldPredicate)>,
+    /// Key is the query parameter name, Vec for each supports different selectors
+    pub query: Vec<(String, Vec<FieldPredicate>)>,
     /// Predicates for specific headers
-    /// Key is the header name (lowercase for case-insensitive matching)
-    pub headers: Vec<(String, FieldPredicate)>,
-    /// Predicate for requestFrom field
-    pub request_from: Option<FieldPredicate>,
-    /// Predicate for ip field
-    pub ip: Option<FieldPredicate>,
+    /// Key is the header name (lowercase), Vec for each supports different selectors
+    pub headers: Vec<(String, Vec<FieldPredicate>)>,
+    /// Predicates for requestFrom field
+    /// Vec supports multiple predicates with different selectors
+    pub request_from: Vec<FieldPredicate>,
+    /// Predicates for ip field
+    /// Vec supports multiple predicates with different selectors
+    pub ip: Vec<FieldPredicate>,
     /// Predicates for form fields
-    pub form: Vec<(String, FieldPredicate)>,
+    /// Key is the form field name, Vec for each supports different selectors
+    pub form: Vec<(String, Vec<FieldPredicate>)>,
 }
 
 impl OptimizedPredicates {
     /// Create an empty set of optimized predicates.
     pub fn new() -> Self {
         Self {
-            method: None,
-            path: None,
+            method: Vec::new(),
+            path: Vec::new(),
             body: Vec::new(),
             query: Vec::new(),
             headers: Vec::new(),
-            request_from: None,
-            ip: None,
+            request_from: Vec::new(),
+            ip: Vec::new(),
             form: Vec::new(),
         }
     }
@@ -432,66 +437,73 @@ impl OptimizedPredicates {
         client_ip: Option<&str>,
         form: Option<&std::collections::HashMap<String, String>>,
     ) -> bool {
-        // Check method
-        if let Some(pred) = &self.method {
-            if !pred.matches(method) {
-                return false;
-            }
-        }
-
-        // Check path
-        if let Some(pred) = &self.path {
-            if !pred.matches(path) {
-                return false;
-            }
-        }
-
-        // Check body predicates (each may have its own selector for value extraction)
-        let body_str = body.unwrap_or("");
-        for pred in &self.body {
-            // Apply selector if present to extract the value to match against
+        // Helper to match a value with selector extraction
+        let match_with_selector = |pred: &FieldPredicate, value: &str| -> bool {
             let value_to_match = match &pred.selector {
-                Some(ValueSelector::JsonPath(selector)) => {
+                Some(ValueSelector::JsonPath(_selector)) => {
                     // Extract using jsonpath
                     // TODO: Implement jsonpath extraction
-                    // For now, use the full body
-                    body_str
+                    // For now, use the full value
+                    value
                 }
-                Some(ValueSelector::XPath { selector, .. }) => {
+                Some(ValueSelector::XPath { .. }) => {
                     // Extract using xpath
                     // TODO: Implement xpath extraction
-                    // For now, use the full body
-                    body_str
+                    // For now, use the full value
+                    value
                 }
-                None => body_str,
+                None => value,
             };
-            if !pred.matches(value_to_match) {
+            pred.matches(value_to_match)
+        };
+
+        // Check method predicates
+        for pred in &self.method {
+            if !match_with_selector(pred, method) {
                 return false;
             }
         }
 
-        // Check request_from
-        if let Some(pred) = &self.request_from {
-            let rf = request_from.unwrap_or("");
-            if !pred.matches(rf) {
+        // Check path predicates
+        for pred in &self.path {
+            if !match_with_selector(pred, path) {
                 return false;
             }
         }
 
-        // Check ip
-        if let Some(pred) = &self.ip {
-            let ip = client_ip.unwrap_or("");
-            if !pred.matches(ip) {
+        // Check body predicates
+        let body_str = body.unwrap_or("");
+        for pred in &self.body {
+            if !match_with_selector(pred, body_str) {
+                return false;
+            }
+        }
+
+        // Check request_from predicates
+        let rf = request_from.unwrap_or("");
+        for pred in &self.request_from {
+            if !match_with_selector(pred, rf) {
+                return false;
+            }
+        }
+
+        // Check ip predicates
+        let ip_str = client_ip.unwrap_or("");
+        for pred in &self.ip {
+            if !match_with_selector(pred, ip_str) {
                 return false;
             }
         }
 
         // Check query parameters
-        for (param_name, pred) in &self.query {
+        for (param_name, preds) in &self.query {
             match query.get(param_name) {
                 Some(value) => {
-                    if !pred.matches(value) {
-                        return false;
+                    // All predicates for this query parameter must match
+                    for pred in preds {
+                        if !match_with_selector(pred, value) {
+                            return false;
+                        }
                     }
                 }
                 None => return false, // Required query parameter not present
@@ -499,12 +511,14 @@ impl OptimizedPredicates {
         }
 
         // Check headers
-        for (header_name, pred) in &self.headers {
-            // Headers are already lowercase in the map
+        for (header_name, preds) in &self.headers {
             match headers.get(header_name) {
                 Some(value) => {
-                    if !pred.matches(value) {
-                        return false;
+                    // All predicates for this header must match
+                    for pred in preds {
+                        if !match_with_selector(pred, value) {
+                            return false;
+                        }
                     }
                 }
                 None => return false, // Required header not present
@@ -512,11 +526,14 @@ impl OptimizedPredicates {
         }
 
         // Check form fields
-        for (field_name, pred) in &self.form {
+        for (field_name, preds) in &self.form {
             match form.and_then(|f| f.get(field_name)) {
                 Some(value) => {
-                    if !pred.matches(value) {
-                        return false;
+                    // All predicates for this form field must match
+                    for pred in preds {
+                        if !match_with_selector(pred, value) {
+                            return false;
+                        }
                     }
                 }
                 None => return false, // Required form field not present
@@ -528,13 +545,13 @@ impl OptimizedPredicates {
 
     /// Check if these predicates have any constraints.
     pub fn is_empty(&self) -> bool {
-        self.method.is_none()
-            && self.path.is_none()
+        self.method.is_empty()
+            && self.path.is_empty()
             && self.body.is_empty()
             && self.query.is_empty()
             && self.headers.is_empty()
-            && self.request_from.is_none()
-            && self.ip.is_none()
+            && self.request_from.is_empty()
+            && self.ip.is_empty()
             && self.form.is_empty()
     }
 }
@@ -673,7 +690,7 @@ mod tests {
     #[test]
     fn test_optimized_predicates_not_empty() {
         let mut pred = OptimizedPredicates::new();
-        pred.method = Some(FieldPredicate::new(StringPredicate::empty_simple()));
+        pred.method.push(FieldPredicate::new(StringPredicate::empty_simple()));
         assert!(!pred.is_empty());
     }
 

@@ -175,44 +175,51 @@ impl FieldPredicateBuilder {
     }
 }
 
-/// Key for grouping body predicates by selector.
+/// Key for grouping predicates by selector.
 ///
-/// Body predicates with the same selector can be optimized together,
+/// Predicates with the same selector can be optimized together,
 /// but predicates with different selectors must be kept separate.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-enum BodySelectorKey {
+enum SelectorKey {
     NoSelector,
     JsonPath(String),
     XPath(String), // Just use selector string for key, ignore namespaces for grouping
 }
 
-impl From<&Option<PredicateSelector>> for BodySelectorKey {
+impl From<&Option<PredicateSelector>> for SelectorKey {
     fn from(selector: &Option<PredicateSelector>) -> Self {
         match selector {
-            None => BodySelectorKey::NoSelector,
+            None => SelectorKey::NoSelector,
             Some(PredicateSelector::JsonPath { selector }) => {
-                BodySelectorKey::JsonPath(selector.clone())
+                SelectorKey::JsonPath(selector.clone())
             }
             Some(PredicateSelector::XPath { selector, .. }) => {
-                BodySelectorKey::XPath(selector.clone())
+                SelectorKey::XPath(selector.clone())
             }
         }
     }
 }
 
 /// Per-field builders for constructing optimized predicates.
+/// All fields now support grouping by selector.
 #[derive(Debug, Default)]
 struct FieldBuilders {
-    method: FieldPredicateBuilder,
-    path: FieldPredicateBuilder,
+    /// Method builders grouped by selector
+    method: HashMap<SelectorKey, FieldPredicateBuilder>,
+    /// Path builders grouped by selector
+    path: HashMap<SelectorKey, FieldPredicateBuilder>,
     /// Body builders grouped by selector
-    /// Each unique selector gets its own builder for optimization
-    body: HashMap<BodySelectorKey, FieldPredicateBuilder>,
-    query: HashMap<String, FieldPredicateBuilder>,
-    headers: HashMap<String, FieldPredicateBuilder>,
-    request_from: FieldPredicateBuilder,
-    ip: FieldPredicateBuilder,
-    form: HashMap<String, FieldPredicateBuilder>,
+    body: HashMap<SelectorKey, FieldPredicateBuilder>,
+    /// Query builders: param name -> selector -> builder
+    query: HashMap<String, HashMap<SelectorKey, FieldPredicateBuilder>>,
+    /// Header builders: header name -> selector -> builder
+    headers: HashMap<String, HashMap<SelectorKey, FieldPredicateBuilder>>,
+    /// RequestFrom builders grouped by selector
+    request_from: HashMap<SelectorKey, FieldPredicateBuilder>,
+    /// IP builders grouped by selector
+    ip: HashMap<SelectorKey, FieldPredicateBuilder>,
+    /// Form builders: field name -> selector -> builder
+    form: HashMap<String, HashMap<SelectorKey, FieldPredicateBuilder>>,
 }
 
 /// Convert Mountebank predicates to optimized per-field format.
@@ -243,16 +250,20 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
 
     // Build final optimized predicates
     Ok(OptimizedPredicates {
-        method: if !builders.method.is_empty() {
-            Some(builders.method.build()?)
-        } else {
-            None
-        },
-        path: if !builders.path.is_empty() {
-            Some(builders.path.build()?)
-        } else {
-            None
-        },
+        // Build all method predicates (one per unique selector)
+        method: builders
+            .method
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(_, v)| v.build())
+            .collect::<Result<Vec<_>, regex::Error>>()?,
+        // Build all path predicates (one per unique selector)
+        path: builders
+            .path
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(_, v)| v.build())
+            .collect::<Result<Vec<_>, regex::Error>>()?,
         // Build all body predicates (one per unique selector)
         body: builders
             .body
@@ -260,30 +271,67 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
             .filter(|(_, v)| !v.is_empty())
             .map(|(_, v)| v.build())
             .collect::<Result<Vec<_>, regex::Error>>()?,
+        // Build query predicates: param name -> Vec<FieldPredicate>
         query: builders
             .query
             .into_iter()
-            .map(|(k, v)| Ok((k, v.build()?)))
+            .map(|(param_name, selector_map)| {
+                let preds: Vec<FieldPredicate> = selector_map
+                    .into_iter()
+                    .filter(|(_, v)| !v.is_empty())
+                    .map(|(_, v)| v.build())
+                    .collect::<Result<Vec<_>, regex::Error>>()?;
+                Ok((param_name, preds))
+            })
+            .filter(|r: &Result<(String, Vec<FieldPredicate>), regex::Error>| {
+                r.as_ref().map(|(_, v)| !v.is_empty()).unwrap_or(false)
+            })
             .collect::<Result<Vec<_>, regex::Error>>()?,
+        // Build header predicates: header name -> Vec<FieldPredicate>
         headers: builders
             .headers
             .into_iter()
-            .map(|(k, v)| Ok((k, v.build()?)))
+            .map(|(header_name, selector_map)| {
+                let preds: Vec<FieldPredicate> = selector_map
+                    .into_iter()
+                    .filter(|(_, v)| !v.is_empty())
+                    .map(|(_, v)| v.build())
+                    .collect::<Result<Vec<_>, regex::Error>>()?;
+                Ok((header_name, preds))
+            })
+            .filter(|r: &Result<(String, Vec<FieldPredicate>), regex::Error>| {
+                r.as_ref().map(|(_, v)| !v.is_empty()).unwrap_or(false)
+            })
             .collect::<Result<Vec<_>, regex::Error>>()?,
-        request_from: if !builders.request_from.is_empty() {
-            Some(builders.request_from.build()?)
-        } else {
-            None
-        },
-        ip: if !builders.ip.is_empty() {
-            Some(builders.ip.build()?)
-        } else {
-            None
-        },
+        // Build all request_from predicates (one per unique selector)
+        request_from: builders
+            .request_from
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(_, v)| v.build())
+            .collect::<Result<Vec<_>, regex::Error>>()?,
+        // Build all ip predicates (one per unique selector)
+        ip: builders
+            .ip
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(_, v)| v.build())
+            .collect::<Result<Vec<_>, regex::Error>>()?,
+        // Build form predicates: field name -> Vec<FieldPredicate>
         form: builders
             .form
             .into_iter()
-            .map(|(k, v)| Ok((k, v.build()?)))
+            .map(|(field_name, selector_map)| {
+                let preds: Vec<FieldPredicate> = selector_map
+                    .into_iter()
+                    .filter(|(_, v)| !v.is_empty())
+                    .map(|(_, v)| v.build())
+                    .collect::<Result<Vec<_>, regex::Error>>()?;
+                Ok((field_name, preds))
+            })
+            .filter(|r: &Result<(String, Vec<FieldPredicate>), regex::Error>| {
+                r.as_ref().map(|(_, v)| !v.is_empty()).unwrap_or(false)
+            })
             .collect::<Result<Vec<_>, regex::Error>>()?,
     })
 }
@@ -418,22 +466,31 @@ where
 
         match field_name.as_str() {
             "method" => {
+                let selector_key = SelectorKey::from(&selector.cloned());
+                let builder = builders.method.entry(selector_key).or_default();
                 if let Some(except) = except_pattern {
-                    builders.method.except_pattern = Some(except.clone());
+                    builder.except_pattern = Some(except.clone());
                 }
-                add_to_builder(&mut builders.method, value_str, case_sensitive);
+                if let Some(sel) = selector {
+                    builder.selector = Some(sel.clone());
+                }
+                add_to_builder(builder, value_str, case_sensitive);
             }
             "path" => {
+                let selector_key = SelectorKey::from(&selector.cloned());
+                let builder = builders.path.entry(selector_key).or_default();
                 if let Some(except) = except_pattern {
-                    builders.path.except_pattern = Some(except.clone());
+                    builder.except_pattern = Some(except.clone());
                 }
-                add_to_builder(&mut builders.path, value_str, case_sensitive);
+                if let Some(sel) = selector {
+                    builder.selector = Some(sel.clone());
+                }
+                add_to_builder(builder, value_str, case_sensitive);
             }
             "body" => {
                 // Group body predicates by selector
-                let selector_key = BodySelectorKey::from(&selector.cloned());
+                let selector_key = SelectorKey::from(&selector.cloned());
                 let builder = builders.body.entry(selector_key).or_default();
-
                 if let Some(except) = except_pattern {
                     builder.except_pattern = Some(except.clone());
                 }
@@ -443,16 +500,26 @@ where
                 add_to_builder(builder, value_str, case_sensitive);
             }
             "requestFrom" => {
+                let selector_key = SelectorKey::from(&selector.cloned());
+                let builder = builders.request_from.entry(selector_key).or_default();
                 if let Some(except) = except_pattern {
-                    builders.request_from.except_pattern = Some(except.clone());
+                    builder.except_pattern = Some(except.clone());
                 }
-                add_to_builder(&mut builders.request_from, value_str, case_sensitive);
+                if let Some(sel) = selector {
+                    builder.selector = Some(sel.clone());
+                }
+                add_to_builder(builder, value_str, case_sensitive);
             }
             "ip" => {
+                let selector_key = SelectorKey::from(&selector.cloned());
+                let builder = builders.ip.entry(selector_key).or_default();
                 if let Some(except) = except_pattern {
-                    builders.ip.except_pattern = Some(except.clone());
+                    builder.except_pattern = Some(except.clone());
                 }
-                add_to_builder(&mut builders.ip, value_str, case_sensitive);
+                if let Some(sel) = selector {
+                    builder.selector = Some(sel.clone());
+                }
+                add_to_builder(builder, value_str, case_sensitive);
             }
             "query" => {
                 // Query is an object with parameter names as keys
@@ -462,9 +529,18 @@ where
                             serde_json::Value::String(s) => s.clone(),
                             _ => param_value.to_string(),
                         };
-                        let builder = builders.query.entry(param_name.clone()).or_default();
+                        let selector_key = SelectorKey::from(&selector.cloned());
+                        let builder = builders
+                            .query
+                            .entry(param_name.clone())
+                            .or_default()
+                            .entry(selector_key)
+                            .or_default();
                         if let Some(except) = except_pattern {
                             builder.except_pattern = Some(except.clone());
+                        }
+                        if let Some(sel) = selector {
+                            builder.selector = Some(sel.clone());
                         }
                         add_to_builder(builder, param_value_str, case_sensitive);
                     }
@@ -479,12 +555,18 @@ where
                             _ => header_value.to_string(),
                         };
                         // Lowercase header names for case-insensitive matching
+                        let selector_key = SelectorKey::from(&selector.cloned());
                         let builder = builders
                             .headers
                             .entry(header_name.to_lowercase())
+                            .or_default()
+                            .entry(selector_key)
                             .or_default();
                         if let Some(except) = except_pattern {
                             builder.except_pattern = Some(except.clone());
+                        }
+                        if let Some(sel) = selector {
+                            builder.selector = Some(sel.clone());
                         }
                         add_to_builder(builder, header_value_str, case_sensitive);
                     }
@@ -498,9 +580,18 @@ where
                             serde_json::Value::String(s) => s.clone(),
                             _ => form_value.to_string(),
                         };
-                        let builder = builders.form.entry(form_name.clone()).or_default();
+                        let selector_key = SelectorKey::from(&selector.cloned());
+                        let builder = builders
+                            .form
+                            .entry(form_name.clone())
+                            .or_default()
+                            .entry(selector_key)
+                            .or_default();
                         if let Some(except) = except_pattern {
                             builder.except_pattern = Some(except.clone());
+                        }
+                        if let Some(sel) = selector {
+                            builder.selector = Some(sel.clone());
                         }
                         add_to_builder(builder, form_value_str, case_sensitive);
                     }
@@ -667,8 +758,8 @@ mod tests {
 
         let optimized = optimize_predicates(&predicates).unwrap();
 
-        assert!(optimized.path.is_some());
-        assert!(optimized.body.is_some());
+        assert!(!optimized.path.is_empty());
+        assert!(!optimized.body.is_empty());
     }
 
     #[test]
@@ -723,8 +814,8 @@ mod tests {
         let optimized = optimize_predicates(&predicates).unwrap();
 
         // Verify the structure is optimized per-field
-        assert!(optimized.path.is_some(), "Path predicate should exist");
-        assert!(optimized.body.is_some(), "Body predicate should exist");
+        assert!(!optimized.path.is_empty(), "Path predicate should exist");
+        assert!(!optimized.body.is_empty(), "Body predicate should exist");
 
         // Test matching with the optimized predicates
         let query = HashMap::new();
@@ -865,8 +956,8 @@ mod tests {
         let optimized = optimize_predicates(&predicates).unwrap();
 
         // Should be optimized to the same structure as the non-AND version
-        assert!(optimized.path.is_some());
-        assert!(optimized.body.is_some());
+        assert!(!optimized.path.is_empty());
+        assert!(!optimized.body.is_empty());
 
         // Test matching
         let query = HashMap::new();
