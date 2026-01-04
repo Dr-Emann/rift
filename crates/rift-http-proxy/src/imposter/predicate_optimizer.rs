@@ -4,10 +4,12 @@
 //! to our optimized per-field format that enables better cache locality and RegexSet optimization.
 
 use super::optimized_predicates::{
-    FieldPredicate, MaybeSensitiveStr, OptimizedPredicates, StringPredicate, ValueSelector,
+    FieldPredicate, MaybeSensitiveStr, ObjectPredicate, OptimizedPredicates, StringPredicate,
+    ValuePredicate, ValueSelector,
 };
 use super::types::{Predicate, PredicateOperation, PredicateSelector};
 use regex::{Regex, RegexSet};
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
 /// A builder for constructing StringPredicates from multiple predicate operations.
@@ -127,18 +129,17 @@ impl StringPredicateBuilder {
     }
 }
 
-/// Builder for a FieldPredicate (StringPredicate + except pattern + selector).
+/// Builder for a FieldPredicate (ValuePredicate + except pattern + selector).
 #[derive(Debug, Default)]
 struct FieldPredicateBuilder {
     string_pred: StringPredicateBuilder,
+    object_pred: Option<ObjectPredicate>,
     except_pattern: Option<String>,
     selector: Option<PredicateSelector>,
 }
 
 impl FieldPredicateBuilder {
     fn build(self) -> Result<FieldPredicate, regex::Error> {
-        let pred = self.string_pred.build()?;
-
         // Convert PredicateSelector to ValueSelector if present
         let value_selector = self.selector.map(|s| match s {
             PredicateSelector::JsonPath { selector } => ValueSelector::JsonPath(selector),
@@ -148,19 +149,28 @@ impl FieldPredicateBuilder {
             },
         });
 
+        // Build the ValuePredicate (either String or Object)
+        let value_pred = if let Some(obj_pred) = self.object_pred {
+            ValuePredicate::Object(obj_pred)
+        } else {
+            ValuePredicate::String(self.string_pred.build()?)
+        };
+
         match (self.except_pattern, value_selector) {
             (Some(pattern), Some(selector)) => {
                 let except_regex = Regex::new(&pattern)?;
-                Ok(FieldPredicate::with_except_and_selector(pred, except_regex, selector))
+                Ok(FieldPredicate::with_except_and_selector_value(
+                    value_pred,
+                    except_regex,
+                    selector,
+                ))
             }
             (Some(pattern), None) => {
                 let except_regex = Regex::new(&pattern)?;
-                Ok(FieldPredicate::with_except(pred, except_regex))
+                Ok(FieldPredicate::with_except_value(value_pred, except_regex))
             }
-            (None, Some(selector)) => {
-                Ok(FieldPredicate::with_selector(pred, selector))
-            }
-            (None, None) => Ok(FieldPredicate::new(pred)),
+            (None, Some(selector)) => Ok(FieldPredicate::with_selector_value(value_pred, selector)),
+            (None, None) => Ok(FieldPredicate::new_value(value_pred)),
         }
     }
 
@@ -170,6 +180,7 @@ impl FieldPredicateBuilder {
             && self.string_pred.contains.is_empty()
             && self.string_pred.equals.is_none()
             && self.string_pred.regexes.is_empty()
+            && self.object_pred.is_none()
             && self.except_pattern.is_none()
             && self.selector.is_none()
     }
@@ -352,6 +363,7 @@ fn process_predicate_operation(
                 except_pattern.as_ref(),
                 selector.as_ref(),
                 builders,
+                PredicateOperationType::Equals,
                 |builder, value, cs| {
                     builder.string_pred.add_equals(value, cs);
                 },
@@ -364,6 +376,7 @@ fn process_predicate_operation(
                 except_pattern.as_ref(),
                 selector.as_ref(),
                 builders,
+                PredicateOperationType::Contains,
                 |builder, value, cs| {
                     builder.string_pred.add_contains(value, cs);
                 },
@@ -376,6 +389,7 @@ fn process_predicate_operation(
                 except_pattern.as_ref(),
                 selector.as_ref(),
                 builders,
+                PredicateOperationType::StartsWith,
                 |builder, value, cs| {
                     builder.string_pred.add_starts_with(value, cs);
                 },
@@ -388,6 +402,7 @@ fn process_predicate_operation(
                 except_pattern.as_ref(),
                 selector.as_ref(),
                 builders,
+                PredicateOperationType::EndsWith,
                 |builder, value, cs| {
                     builder.string_pred.add_ends_with(value, cs);
                 },
@@ -400,6 +415,7 @@ fn process_predicate_operation(
                 except_pattern.as_ref(),
                 selector.as_ref(),
                 builders,
+                PredicateOperationType::Matches,
                 |builder, value, _cs| {
                     builder.string_pred.add_regex(value);
                 },
@@ -447,22 +463,61 @@ fn process_predicate_operation(
 }
 
 /// Process fields from a predicate operation and add to appropriate builders.
+/// Helper to add an object predicate to a builder.
+fn add_object_to_builder(
+    builder: &mut FieldPredicateBuilder,
+    value: &JsonValue,
+    operation_type: PredicateOperationType,
+) -> Result<(), regex::Error> {
+    let obj_pred = match operation_type {
+        PredicateOperationType::Equals => ObjectPredicate::Equals(value.clone()),
+        PredicateOperationType::DeepEquals => ObjectPredicate::DeepEquals(value.clone()),
+        PredicateOperationType::Contains => ObjectPredicate::Contains(value.clone()),
+        PredicateOperationType::Matches => {
+            // For matches with object, each value should be a regex pattern
+            if let JsonValue::Object(obj) = value {
+                let mut regexes = HashMap::new();
+                for (key, val) in obj {
+                    if let JsonValue::String(pattern) = val {
+                        regexes.insert(key.clone(), Regex::new(pattern)?);
+                    }
+                }
+                ObjectPredicate::Matches(regexes)
+            } else {
+                return Ok(()); // Skip non-object matches
+            }
+        }
+        _ => return Ok(()), // Other operations don't support objects
+    };
+    builder.object_pred = Some(obj_pred);
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PredicateOperationType {
+    Equals,
+    DeepEquals,
+    Contains,
+    StartsWith,
+    EndsWith,
+    Matches,
+}
+
 fn process_fields<F>(
     fields: &HashMap<String, serde_json::Value>,
     case_sensitive: bool,
     except_pattern: Option<&String>,
     selector: Option<&PredicateSelector>,
     builders: &mut FieldBuilders,
-    mut add_to_builder: F,
+    operation_type: PredicateOperationType,
+    mut add_string_to_builder: F,
 ) -> Result<(), regex::Error>
 where
     F: FnMut(&mut FieldPredicateBuilder, String, bool),
 {
     for (field_name, value) in fields {
-        let value_str = match value {
-            serde_json::Value::String(s) => s.clone(),
-            _ => value.to_string(),
-        };
+        // Check if this is an object value (for body, query, headers, form)
+        let is_object_value = value.is_object() || value.is_array();
 
         match field_name.as_str() {
             "method" => {
@@ -474,7 +529,12 @@ where
                 if let Some(sel) = selector {
                     builder.selector = Some(sel.clone());
                 }
-                add_to_builder(builder, value_str, case_sensitive);
+                if is_object_value {
+                    add_object_to_builder(builder, value, operation_type)?;
+                } else {
+                    let value_str = value.as_str().unwrap_or("").to_string();
+                    add_string_to_builder(builder, value_str, case_sensitive);
+                }
             }
             "path" => {
                 let selector_key = SelectorKey::from(&selector.cloned());
@@ -485,7 +545,12 @@ where
                 if let Some(sel) = selector {
                     builder.selector = Some(sel.clone());
                 }
-                add_to_builder(builder, value_str, case_sensitive);
+                if is_object_value {
+                    add_object_to_builder(builder, value, operation_type)?;
+                } else {
+                    let value_str = value.as_str().unwrap_or("").to_string();
+                    add_string_to_builder(builder, value_str, case_sensitive);
+                }
             }
             "body" => {
                 // Group body predicates by selector
@@ -497,7 +562,14 @@ where
                 if let Some(sel) = selector {
                     builder.selector = Some(sel.clone());
                 }
-                add_to_builder(builder, value_str, case_sensitive);
+                if is_object_value {
+                    // Object matching (JSON body)
+                    add_object_to_builder(builder, value, operation_type)?;
+                } else {
+                    // String matching
+                    let value_str = value.as_str().unwrap_or("").to_string();
+                    add_string_to_builder(builder, value_str, case_sensitive);
+                }
             }
             "requestFrom" => {
                 let selector_key = SelectorKey::from(&selector.cloned());
@@ -508,7 +580,12 @@ where
                 if let Some(sel) = selector {
                     builder.selector = Some(sel.clone());
                 }
-                add_to_builder(builder, value_str, case_sensitive);
+                if is_object_value {
+                    add_object_to_builder(builder, value, operation_type)?;
+                } else {
+                    let value_str = value.as_str().unwrap_or("").to_string();
+                    add_string_to_builder(builder, value_str, case_sensitive);
+                }
             }
             "ip" => {
                 let selector_key = SelectorKey::from(&selector.cloned());
@@ -519,16 +596,17 @@ where
                 if let Some(sel) = selector {
                     builder.selector = Some(sel.clone());
                 }
-                add_to_builder(builder, value_str, case_sensitive);
+                if is_object_value {
+                    add_object_to_builder(builder, value, operation_type)?;
+                } else {
+                    let value_str = value.as_str().unwrap_or("").to_string();
+                    add_string_to_builder(builder, value_str, case_sensitive);
+                }
             }
             "query" => {
                 // Query is an object with parameter names as keys
                 if let Some(obj) = value.as_object() {
                     for (param_name, param_value) in obj {
-                        let param_value_str = match param_value {
-                            serde_json::Value::String(s) => s.clone(),
-                            _ => param_value.to_string(),
-                        };
                         let selector_key = SelectorKey::from(&selector.cloned());
                         let builder = builders
                             .query
@@ -542,7 +620,12 @@ where
                         if let Some(sel) = selector {
                             builder.selector = Some(sel.clone());
                         }
-                        add_to_builder(builder, param_value_str, case_sensitive);
+                        if param_value.is_object() || param_value.is_array() {
+                            add_object_to_builder(builder, param_value, operation_type)?;
+                        } else {
+                            let param_value_str = param_value.as_str().unwrap_or("").to_string();
+                            add_string_to_builder(builder, param_value_str, case_sensitive);
+                        }
                     }
                 }
             }
@@ -550,10 +633,6 @@ where
                 // Headers is an object with header names as keys
                 if let Some(obj) = value.as_object() {
                     for (header_name, header_value) in obj {
-                        let header_value_str = match header_value {
-                            serde_json::Value::String(s) => s.clone(),
-                            _ => header_value.to_string(),
-                        };
                         // Lowercase header names for case-insensitive matching
                         let selector_key = SelectorKey::from(&selector.cloned());
                         let builder = builders
@@ -568,7 +647,12 @@ where
                         if let Some(sel) = selector {
                             builder.selector = Some(sel.clone());
                         }
-                        add_to_builder(builder, header_value_str, case_sensitive);
+                        if header_value.is_object() || header_value.is_array() {
+                            add_object_to_builder(builder, header_value, operation_type)?;
+                        } else {
+                            let header_value_str = header_value.as_str().unwrap_or("").to_string();
+                            add_string_to_builder(builder, header_value_str, case_sensitive);
+                        }
                     }
                 }
             }
@@ -576,10 +660,6 @@ where
                 // Form is an object with field names as keys
                 if let Some(obj) = value.as_object() {
                     for (form_name, form_value) in obj {
-                        let form_value_str = match form_value {
-                            serde_json::Value::String(s) => s.clone(),
-                            _ => form_value.to_string(),
-                        };
                         let selector_key = SelectorKey::from(&selector.cloned());
                         let builder = builders
                             .form
@@ -593,7 +673,12 @@ where
                         if let Some(sel) = selector {
                             builder.selector = Some(sel.clone());
                         }
-                        add_to_builder(builder, form_value_str, case_sensitive);
+                        if form_value.is_object() || form_value.is_array() {
+                            add_object_to_builder(builder, form_value, operation_type)?;
+                        } else {
+                            let form_value_str = form_value.as_str().unwrap_or("").to_string();
+                            add_string_to_builder(builder, form_value_str, case_sensitive);
+                        }
                     }
                 }
             }
@@ -969,6 +1054,91 @@ mod tests {
             &query,
             &headers,
             Some("abc123456busy-42"),
+            None,
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn test_object_matching() {
+        // Test that object values are matched correctly
+        // equals: { body: { xyz: "Hi" } }
+        // Should match: {"a": "ignored", "xyz": "Hi"}
+
+        let mut fields = HashMap::new();
+        fields.insert(
+            "body".to_string(),
+            serde_json::json!({
+                "xyz": "Hi"
+            }),
+        );
+
+        let predicates = vec![make_predicate(PredicateOperation::Equals(fields), true)];
+
+        let optimized = optimize_predicates(&predicates).unwrap();
+
+        assert!(!optimized.body.is_empty(), "Body predicate should exist");
+
+        // Test matching
+        let query = HashMap::new();
+        let headers = HashMap::new();
+
+        // Should match: body contains xyz: "Hi" (subset match)
+        assert!(optimized.matches(
+            "GET",
+            "/any/path",
+            &query,
+            &headers,
+            Some(r#"{"a": "ignored", "xyz": "Hi"}"#),
+            None,
+            None,
+            None,
+        ));
+
+        // Should match: exact match
+        assert!(optimized.matches(
+            "GET",
+            "/any/path",
+            &query,
+            &headers,
+            Some(r#"{"xyz": "Hi"}"#),
+            None,
+            None,
+            None,
+        ));
+
+        // Should NOT match: xyz value is different
+        assert!(!optimized.matches(
+            "GET",
+            "/any/path",
+            &query,
+            &headers,
+            Some(r#"{"a": "ignored", "xyz": "Bye"}"#),
+            None,
+            None,
+            None,
+        ));
+
+        // Should NOT match: missing xyz field
+        assert!(!optimized.matches(
+            "GET",
+            "/any/path",
+            &query,
+            &headers,
+            Some(r#"{"a": "ignored"}"#),
+            None,
+            None,
+            None,
+        ));
+
+        // Should NOT match: not valid JSON
+        assert!(!optimized.matches(
+            "GET",
+            "/any/path",
+            &query,
+            &headers,
+            Some("not json"),
             None,
             None,
             None,

@@ -74,7 +74,17 @@ This enables:
    }
    ```
 
-3. **`OptimizedPredicates`** - Per-field organization
+3. **`ObjectPredicate`** - JSON object matching
+   - Supports subset matching (equals/contains)
+   - Supports exact matching (deepEquals)
+   - Supports regex matching against object fields
+   - Handles nested objects and arrays
+
+4. **`ValuePredicate`** - Unified string and object matching
+   - Wraps either `StringPredicate` or `ObjectPredicate`
+   - Automatically determines match type based on value
+
+5. **`OptimizedPredicates`** - Per-field organization
    - Groups all predicates by field (method, path, body, etc.)
    - Enables single-pass matching per field
    - Vec for multi-value fields (headers, query params)
@@ -123,6 +133,35 @@ body:
   startsWith: "abc"
   contains: "123"
 ```
+
+### 4. JSON Object Matching
+
+When predicate values are JSON objects (not strings), the system uses object matching:
+
+```yaml
+- equals:
+    body:
+      xyz: "Hi"
+```
+
+This performs subset matching - the request body must be JSON containing `xyz: "Hi"` but can have additional fields:
+
+```json
+// Matches
+{"a": "ignored", "xyz": "Hi"}
+{"xyz": "Hi"}
+
+// Does not match
+{"a": "ignored", "xyz": "Bye"}
+{"a": "ignored"}
+"not json"
+```
+
+Object matching supports:
+- `equals` - Subset match (predicate fields must exist in request)
+- `deepEquals` - Exact match
+- `contains` - Subset match (same as equals for objects)
+- `matches` - Each predicate field value is a regex matching the request field
 
 ## Performance Benefits
 

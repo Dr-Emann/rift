@@ -31,7 +31,9 @@
 //! 4. Improve cache locality
 
 use regex::{Regex, RegexSet};
+use serde_json::Value as JsonValue;
 use std::borrow::Cow;
+use std::collections::HashMap as StdHashMap;
 
 /// A string with optional case-insensitive matching.
 ///
@@ -272,14 +274,133 @@ impl StringPredicate {
     }
 }
 
+/// Object-based predicate matching for JSON bodies.
+///
+/// Mountebank supports matching against JSON objects, not just strings.
+/// This enum handles the different types of object matching.
+#[derive(Debug, Clone)]
+pub enum ObjectPredicate {
+    /// Subset match - the request object must contain all key-value pairs from the predicate
+    /// (but can have additional fields).
+    Equals(JsonValue),
+    /// Exact match - the request object must exactly match the predicate object.
+    DeepEquals(JsonValue),
+    /// Contains - the request object must contain the predicate object as a subset.
+    Contains(JsonValue),
+    /// Regex match - each field in the predicate is a regex that must match the corresponding
+    /// field in the request object.
+    Matches(StdHashMap<String, Regex>),
+}
+
+impl ObjectPredicate {
+    /// Check if this predicate matches the given JSON value.
+    pub fn matches(&self, value: &JsonValue) -> bool {
+        match self {
+            ObjectPredicate::Equals(expected) => {
+                // Subset match: all fields in expected must exist and match in value
+                Self::is_subset(expected, value)
+            }
+            ObjectPredicate::DeepEquals(expected) => {
+                // Exact match
+                expected == value
+            }
+            ObjectPredicate::Contains(expected) => {
+                // Subset match (same as Equals for objects)
+                Self::is_subset(expected, value)
+            }
+            ObjectPredicate::Matches(regexes) => {
+                // Each regex must match its corresponding field
+                if let JsonValue::Object(obj) = value {
+                    regexes.iter().all(|(key, regex)| {
+                        obj.get(key)
+                            .and_then(|v| v.as_str())
+                            .map(|s| regex.is_match(s))
+                            .unwrap_or(false)
+                    })
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Check if `subset` is a subset of `superset`.
+    /// All fields in `subset` must exist and match in `superset`.
+    fn is_subset(subset: &JsonValue, superset: &JsonValue) -> bool {
+        match (subset, superset) {
+            (JsonValue::Object(sub_obj), JsonValue::Object(super_obj)) => {
+                // All keys in subset must exist in superset and have matching values
+                sub_obj.iter().all(|(key, sub_value)| {
+                    super_obj
+                        .get(key)
+                        .map(|super_value| Self::is_subset(sub_value, super_value))
+                        .unwrap_or(false)
+                })
+            }
+            (JsonValue::Array(sub_arr), JsonValue::Array(super_arr)) => {
+                // For arrays, check if subset array is contained in superset array
+                // This is a simple implementation; Mountebank's actual behavior may differ
+                sub_arr.len() <= super_arr.len()
+                    && sub_arr
+                        .iter()
+                        .all(|sub_item| super_arr.iter().any(|super_item| sub_item == super_item))
+            }
+            // For primitive values, they must be equal
+            _ => subset == superset,
+        }
+    }
+}
+
+/// A predicate that can match either strings or JSON objects.
+#[derive(Debug, Clone)]
+pub enum ValuePredicate {
+    /// String-based matching
+    String(StringPredicate),
+    /// Object-based matching (for JSON bodies)
+    Object(ObjectPredicate),
+}
+
+impl ValuePredicate {
+    /// Match against a string value.
+    pub fn matches_str(&self, value: &str) -> bool {
+        match self {
+            ValuePredicate::String(pred) => pred.matches(value),
+            ValuePredicate::Object(pred) => {
+                // Try to parse as JSON
+                if let Ok(json) = serde_json::from_str(value) {
+                    pred.matches(&json)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Match against a JSON value.
+    pub fn matches_json(&self, value: &JsonValue) -> bool {
+        match self {
+            ValuePredicate::String(pred) => {
+                // Convert JSON to string and match
+                if let Some(s) = value.as_str() {
+                    pred.matches(s)
+                } else {
+                    // For non-string JSON, convert to string representation
+                    pred.matches(&value.to_string())
+                }
+            }
+            ValuePredicate::Object(pred) => pred.matches(value),
+        }
+    }
+}
+
 /// Field-level preprocessing and matching.
 ///
-/// Wraps a StringPredicate with optional preprocessing like `except` patterns
+/// Wraps a ValuePredicate (string or object) with optional preprocessing like `except` patterns
 /// and value extraction via jsonpath/xpath selectors.
 #[derive(Debug, Clone)]
 pub struct FieldPredicate {
-    /// The string matching predicate
-    pub predicate: StringPredicate,
+    /// The matching predicate (string or object)
+    pub predicate: ValuePredicate,
     /// Optional regex pattern to strip from values before matching (Mountebank `except` parameter)
     pub except: Option<Regex>,
     /// Optional selector for extracting values before matching (jsonpath/xpath)
@@ -288,8 +409,17 @@ pub struct FieldPredicate {
 }
 
 impl FieldPredicate {
-    /// Create a new FieldPredicate with just the predicate (no preprocessing).
+    /// Create a new FieldPredicate with a string predicate (no preprocessing).
     pub fn new(predicate: StringPredicate) -> Self {
+        Self {
+            predicate: ValuePredicate::String(predicate),
+            except: None,
+            selector: None,
+        }
+    }
+
+    /// Create a new FieldPredicate with a value predicate (no preprocessing).
+    pub fn new_value(predicate: ValuePredicate) -> Self {
         Self {
             predicate,
             except: None,
@@ -297,8 +427,26 @@ impl FieldPredicate {
         }
     }
 
+    /// Create a new FieldPredicate with an object predicate.
+    pub fn new_object(predicate: ObjectPredicate) -> Self {
+        Self {
+            predicate: ValuePredicate::Object(predicate),
+            except: None,
+            selector: None,
+        }
+    }
+
     /// Create a FieldPredicate with an except pattern.
     pub fn with_except(predicate: StringPredicate, except: Regex) -> Self {
+        Self {
+            predicate: ValuePredicate::String(predicate),
+            except: Some(except),
+            selector: None,
+        }
+    }
+
+    /// Create a FieldPredicate with a value predicate and except pattern.
+    pub fn with_except_value(predicate: ValuePredicate, except: Regex) -> Self {
         Self {
             predicate,
             except: Some(except),
@@ -309,6 +457,15 @@ impl FieldPredicate {
     /// Create a FieldPredicate with a selector.
     pub fn with_selector(predicate: StringPredicate, selector: ValueSelector) -> Self {
         Self {
+            predicate: ValuePredicate::String(predicate),
+            except: None,
+            selector: Some(selector),
+        }
+    }
+
+    /// Create a FieldPredicate with a value predicate and selector.
+    pub fn with_selector_value(predicate: ValuePredicate, selector: ValueSelector) -> Self {
+        Self {
             predicate,
             except: None,
             selector: Some(selector),
@@ -318,6 +475,19 @@ impl FieldPredicate {
     /// Create a FieldPredicate with both except and selector.
     pub fn with_except_and_selector(
         predicate: StringPredicate,
+        except: Regex,
+        selector: ValueSelector,
+    ) -> Self {
+        Self {
+            predicate: ValuePredicate::String(predicate),
+            except: Some(except),
+            selector: Some(selector),
+        }
+    }
+
+    /// Create a FieldPredicate with value predicate, except, and selector.
+    pub fn with_except_and_selector_value(
+        predicate: ValuePredicate,
         except: Regex,
         selector: ValueSelector,
     ) -> Self {
@@ -337,9 +507,9 @@ impl FieldPredicate {
             Some(except) => {
                 // Strip the except pattern and match against the result
                 let processed = except.replace_all(value, "");
-                self.predicate.matches(&processed)
+                self.predicate.matches_str(&processed)
             }
-            None => self.predicate.matches(value),
+            None => self.predicate.matches_str(value),
         }
     }
 }
