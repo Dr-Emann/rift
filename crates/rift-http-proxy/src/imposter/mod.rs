@@ -19,6 +19,8 @@
 mod core;
 mod handler;
 mod manager;
+mod optimized_predicates;
+mod predicate_optimizer;
 mod predicates;
 mod response;
 mod types;
