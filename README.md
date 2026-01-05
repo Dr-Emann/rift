@@ -44,12 +44,9 @@ Rift is a high-performance, [Mountebank](http://www.mbtest.org/)-compatible mock
 ### Run with Docker
 
 ```bash
-# Pull and run (from GitHub Container Registry)
-docker pull ghcr.io/etacassiopeia/rift-proxy:latest
-docker run -p 2525:2525 ghcr.io/etacassiopeia/rift-proxy:latest
-
-# Or from Docker Hub
-docker pull etacassiopeia/rift-proxy:latest
+# Pull and run
+docker pull zainalpour/rift-proxy:latest
+docker run -p 2525:2525 zainalpour/rift-proxy:latest
 
 # Create your first imposter
 curl -X POST http://localhost:2525/imposters \
@@ -72,7 +69,7 @@ curl http://localhost:4545/hello
 ```bash
 # Load your existing imposters.json
 docker run -p 2525:2525 -v $(pwd)/imposters.json:/imposters.json \
-  ghcr.io/etacassiopeia/rift-proxy:latest --configfile /imposters.json
+  zainalpour/rift-proxy:latest --configfile /imposters.json
 ```
 
 ---
@@ -82,11 +79,7 @@ docker run -p 2525:2525 -v $(pwd)/imposters.json:/imposters.json \
 ### Docker (Recommended)
 
 ```bash
-# GitHub Container Registry (recommended)
-docker pull ghcr.io/etacassiopeia/rift-proxy:latest
-
-# Or Docker Hub
-docker pull etacassiopeia/rift-proxy:latest
+docker pull zainalpour/rift-proxy:latest
 ```
 
 ### Homebrew (macOS/Linux)
@@ -272,7 +265,7 @@ Validate imposter configuration files before loading:
 rift-lint ./imposters/
 
 # Via Docker (for CI/CD)
-docker run --rm -v $(pwd):/imposters ghcr.io/etacassiopeia/rift-lint .
+docker run --rm -v $(pwd):/imposters zainalpour/rift-lint .
 
 # Via cargo
 cargo install rift-lint

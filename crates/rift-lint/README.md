@@ -30,8 +30,8 @@ brew install rift
 ### Via Docker (for CI/CD)
 
 ```bash
-docker pull ghcr.io/etacassiopeia/rift-lint:latest
-docker run --rm -v $(pwd):/imposters ghcr.io/etacassiopeia/rift-lint .
+docker pull zainalpour/rift-lint:latest
+docker run --rm -v $(pwd):/imposters zainalpour/rift-lint .
 ```
 
 ### Build from source

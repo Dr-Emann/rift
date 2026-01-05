@@ -251,7 +251,7 @@ Demonstrates all three scripting engines (Rhai, Lua, JavaScript) with equivalent
 # Or using Docker
 docker run -p 2525:2525 -p 4560:4560 \
   -v $(pwd)/docs/demo/imposters-scripting-engines.json:/imposters.json:ro \
-  etacassiopeia/rift-proxy:latest --configfile /imposters.json
+  zainalpour/rift-proxy:latest --configfile /imposters.json
 ```
 
 ### Test All Engines (Port 4560)

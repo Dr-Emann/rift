@@ -19,14 +19,11 @@ Rift is a high-performance, Mountebank-compatible HTTP/HTTPS mock server. This g
 The easiest way to run Rift is using Docker:
 
 ```bash
-# Pull the latest image (from GitHub Container Registry)
-docker pull ghcr.io/etacassiopeia/rift-proxy:latest
-
-# Or from Docker Hub
-docker pull etacassiopeia/rift-proxy:latest
+# Pull the latest image
+docker pull zainalpour/rift-proxy:latest
 
 # Run Rift on port 2525 (Mountebank-compatible admin port)
-docker run -p 2525:2525 ghcr.io/etacassiopeia/rift-proxy:latest
+docker run -p 2525:2525 zainalpour/rift-proxy:latest
 ```
 
 ### Download Binary
@@ -150,7 +147,7 @@ If you have an existing Mountebank configuration file, load it directly:
 ```bash
 # Using Docker
 docker run -p 2525:2525 -v $(pwd)/imposters.json:/imposters.json \
-  ghcr.io/etacassiopeia/rift-proxy:latest --configfile /imposters.json
+  zainalpour/rift-proxy:latest --configfile /imposters.json
 
 # Using binary
 ./rift --configfile imposters.json

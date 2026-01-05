@@ -361,16 +361,12 @@ jobs:
           #### Using Docker
           ```bash
           # From Docker Hub
-          docker pull etacassiopeia/rift-proxy:${{ steps.version.outputs.VERSION }}
-          docker run -p 2525:2525 -p 9090:9090 etacassiopeia/rift-proxy:${{ steps.version.outputs.VERSION }}
-
-          # From GitHub Container Registry
-          docker pull ghcr.io/etacassiopeia/rift-proxy:${{ steps.version.outputs.VERSION }}
-          docker run -p 2525:2525 -p 9090:9090 ghcr.io/etacassiopeia/rift-proxy:${{ steps.version.outputs.VERSION }}
+          docker pull zainalpour/rift-proxy:${{ steps.version.outputs.VERSION }}
+          docker run -p 2525:2525 -p 9090:9090 zainalpour/rift-proxy:${{ steps.version.outputs.VERSION }}
 
           # Linter image for CI/CD
-          docker pull ghcr.io/etacassiopeia/rift-lint:${{ steps.version.outputs.VERSION }}
-          docker run --rm -v $(pwd):/imposters ghcr.io/etacassiopeia/rift-lint:${{ steps.version.outputs.VERSION }} .
+          docker pull zainalpour/rift-lint:${{ steps.version.outputs.VERSION }}
+          docker run --rm -v $(pwd):/imposters zainalpour/rift-lint:${{ steps.version.outputs.VERSION }} .
           ```
 
           #### Using Cargo
@@ -402,8 +398,8 @@ jobs:
 
           | Image | Description |
           |-------|-------------|
-          | `ghcr.io/etacassiopeia/rift-proxy` | Main HTTP proxy server |
-          | `ghcr.io/etacassiopeia/rift-lint` | Imposter validator for CI/CD |
+          | `zainalpour/rift-proxy` | Main HTTP proxy server |
+          | `zainalpour/rift-lint` | Imposter validator for CI/CD |
 
           ### Features
 

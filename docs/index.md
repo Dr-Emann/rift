@@ -58,13 +58,13 @@ Rift supports all major Mountebank features:
 
 ```bash
 # Pull the latest image (from GitHub Container Registry)
-docker pull ghcr.io/etacassiopeia/rift-proxy:latest
+docker pull zainalpour/rift-proxy:latest
 
 # Or from Docker Hub
-docker pull etacassiopeia/rift-proxy:latest
+docker pull zainalpour/rift-proxy:latest
 
 # Run Rift (Mountebank-compatible mode)
-docker run -p 2525:2525 ghcr.io/etacassiopeia/rift-proxy:latest
+docker run -p 2525:2525 zainalpour/rift-proxy:latest
 ```
 
 ### Create Your First Imposter
@@ -92,7 +92,7 @@ curl http://localhost:4545/hello
 ```bash
 # Start Rift with your existing imposters.json file
 docker run -p 2525:2525 -v $(pwd)/imposters.json:/imposters.json \
-  ghcr.io/etacassiopeia/rift-proxy:latest --configfile /imposters.json
+  zainalpour/rift-proxy:latest --configfile /imposters.json
 ```
 
 ### Node.js Integration

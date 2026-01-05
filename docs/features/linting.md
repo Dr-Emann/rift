@@ -23,7 +23,7 @@ brew install rift
 cargo install rift-lint
 
 # Via Docker (for CI/CD)
-docker pull ghcr.io/etacassiopeia/rift-lint:latest
+docker pull zainalpour/rift-lint:latest
 ```
 
 ## Quick Start
@@ -36,7 +36,7 @@ rift-lint ./imposters/
 rift-lint ./imposters/ --strict
 
 # Using Docker
-docker run --rm -v $(pwd):/imposters ghcr.io/etacassiopeia/rift-lint .
+docker run --rm -v $(pwd):/imposters zainalpour/rift-lint .
 ```
 
 ---
@@ -133,7 +133,7 @@ rift-lint ./imposters/ --fix
 
 ```yaml
 - name: Lint Imposters
-  uses: docker://ghcr.io/etacassiopeia/rift-lint:latest
+  uses: docker://zainalpour/rift-lint:latest
   with:
     args: ./imposters/ --strict
 ```
@@ -144,14 +144,14 @@ Or with a direct command:
 - name: Lint Imposters
   run: |
     docker run --rm -v ${{ github.workspace }}:/imposters \
-      ghcr.io/etacassiopeia/rift-lint:latest . --strict
+      zainalpour/rift-lint:latest . --strict
 ```
 
 ### GitLab CI
 
 ```yaml
 lint:
-  image: ghcr.io/etacassiopeia/rift-lint:latest
+  image: zainalpour/rift-lint:latest
   script:
     - rift-lint ./imposters/ --output json > lint-results.json
   artifacts:

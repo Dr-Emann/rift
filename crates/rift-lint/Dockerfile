@@ -92,13 +92,13 @@ WORKDIR /imposters
 #   docker run --rm -v $(pwd):/imposters rift-lint --verbose .
 #
 # In GitHub Actions:
-#   - uses: docker://ghcr.io/etacassiopeia/rift-lint:latest
+#   - uses: docker://zainalpour/rift-lint:latest
 #     with:
 #       args: ./imposters/
 #
 # In GitLab CI:
 #   validate-imposters:
-#     image: ghcr.io/etacassiopeia/rift-lint:latest
+#     image: zainalpour/rift-lint:latest
 #     script:
 #       - rift-lint ./imposters/
 
