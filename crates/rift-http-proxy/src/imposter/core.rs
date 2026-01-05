@@ -3,7 +3,7 @@
 //! This module contains the Imposter struct which represents a single
 //! running imposter instance with its configuration, stubs, and state.
 
-use super::predicates::stub_matches;
+use super::predicates::{parse_query_string, stub_matches};
 use super::response::{
     create_response_preview, create_stub_from_proxy_response, execute_stub_response,
     execute_stub_response_with_rift, get_rift_script_config,
@@ -48,7 +48,7 @@ impl StubState {
     #[must_use]
     pub fn new(stub: Stub) -> Self {
         Self {
-            stub,
+            stub: stub.with_optimized_predicates(),
             cycler: Arc::new(RuleCycler::new()),
         }
     }
@@ -247,19 +247,41 @@ impl Imposter {
         // Parse form data if Content-Type is application/x-www-form-urlencoded
         let form = Self::parse_form_data(headers, body);
 
+        // Parse query string once for optimized matching
+        let query_map = query
+            .map(parse_query_string)
+            .unwrap_or_else(HashMap::new);
+
         for (index, stub_state) in stubs.iter().enumerate() {
             let stub = &stub_state.stub;
-            if stub_matches(
-                &stub.predicates,
-                method,
-                path,
-                query,
-                &headers_map,
-                body,
-                request_from,
-                client_ip,
-                form.as_ref(),
-            ) {
+
+            // Try optimized matching first, fall back to regular matching
+            let matches = if let Some(optimized) = &stub.optimized_predicates {
+                optimized.matches(
+                    method,
+                    path,
+                    &query_map,
+                    &headers_map,
+                    body,
+                    request_from,
+                    client_ip,
+                    form.as_ref(),
+                )
+            } else {
+                stub_matches(
+                    &stub.predicates,
+                    method,
+                    path,
+                    query,
+                    &headers_map,
+                    body,
+                    request_from,
+                    client_ip,
+                    form.as_ref(),
+                )
+            };
+
+            if matches {
                 // TODO(perf): It's unfortunate that we end up deep cloning the whole stub here
                 return Some((stub_state.clone(), index));
             }
@@ -876,7 +898,7 @@ impl Imposter {
         if index >= stubs.len() {
             return Err(format!("Stub index {index} out of bounds"));
         }
-        stubs[index].stub = stub;
+        stubs[index].stub = stub.with_optimized_predicates();
         Ok(())
     }
 

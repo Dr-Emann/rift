@@ -128,6 +128,30 @@ pub struct Stub {
     #[serde(default)]
     pub predicates: Vec<Predicate>,
     pub responses: Vec<StubResponse>,
+    /// Optimized predicates for faster matching (internal optimization, not serialized)
+    /// Built from the predicates field during stub creation
+    #[serde(skip, default)]
+    pub optimized_predicates: Option<super::optimized_predicates::OptimizedPredicates>,
+}
+
+impl Stub {
+    /// Build optimized predicates from the regular predicates.
+    /// Returns a new Stub with optimized predicates populated.
+    /// If optimization fails, the optimized_predicates field will be None.
+    pub fn with_optimized_predicates(mut self) -> Self {
+        if !self.predicates.is_empty() {
+            match super::predicate_optimizer::optimize_predicates(&self.predicates) {
+                Ok(optimized) => {
+                    self.optimized_predicates = Some(optimized);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to optimize predicates: {}", e);
+                    self.optimized_predicates = None;
+                }
+            }
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

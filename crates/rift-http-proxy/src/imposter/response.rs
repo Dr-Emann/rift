@@ -294,6 +294,7 @@ pub fn create_stub_from_proxy_response(
             rift: None,
         }],
         scenario_name: None,
+        optimized_predicates: None,
     }
 }
 

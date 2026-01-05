@@ -57,6 +57,7 @@ fn test_predicate_matching() {
             rift: None,
         }],
         scenario_name: None,
+        optimized_predicates: None,
     };
 
     let empty_headers = HashMap::new();
@@ -141,6 +142,7 @@ fn test_execute_stub() {
             rift: None,
         }],
         scenario_name: None,
+        optimized_predicates: None,
     };
 
     let result = imposter.execute_stub(&StubState::new(stub));
