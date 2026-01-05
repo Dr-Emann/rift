@@ -94,34 +94,62 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build and push amd64 image
-      - name: Build and push amd64
+      # Build and push amd64 image to Docker Hub
+      - name: Build and push amd64 to Docker Hub
         uses: docker/build-push-action@v5
         with:
           context: ./binaries/amd64
           file: ./crates/rift-http-proxy/Dockerfile.prebuilt
           platforms: linux/amd64
           push: true
-          tags: |
-            ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/rift-proxy:${{ steps.vars.outputs.VERSION }}-amd64
-            ${{ env.REGISTRY_GHCR }}/${{ steps.vars.outputs.OWNER_LC }}/rift-proxy:${{ steps.vars.outputs.VERSION }}-amd64
+          tags: ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/rift-proxy:${{ steps.vars.outputs.VERSION }}-amd64
           build-args: |
             VERSION=${{ steps.vars.outputs.VERSION }}
             VCS_REF=${{ github.sha }}
             BUILD_DATE=${{ steps.vars.outputs.BUILD_DATE }}
           provenance: false
 
-      # Build and push arm64 image
-      - name: Build and push arm64
+      # Build and push arm64 image to Docker Hub
+      - name: Build and push arm64 to Docker Hub
         uses: docker/build-push-action@v5
         with:
           context: ./binaries/arm64
           file: ./crates/rift-http-proxy/Dockerfile.prebuilt
           platforms: linux/arm64
           push: true
-          tags: |
-            ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/rift-proxy:${{ steps.vars.outputs.VERSION }}-arm64
-            ${{ env.REGISTRY_GHCR }}/${{ steps.vars.outputs.OWNER_LC }}/rift-proxy:${{ steps.vars.outputs.VERSION }}-arm64
+          tags: ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/rift-proxy:${{ steps.vars.outputs.VERSION }}-arm64
+          build-args: |
+            VERSION=${{ steps.vars.outputs.VERSION }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.vars.outputs.BUILD_DATE }}
+          provenance: false
+
+      # Build and push amd64 image to GHCR (continue on error)
+      - name: Build and push amd64 to GHCR
+        continue-on-error: true
+        uses: docker/build-push-action@v5
+        with:
+          context: ./binaries/amd64
+          file: ./crates/rift-http-proxy/Dockerfile.prebuilt
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY_GHCR }}/${{ steps.vars.outputs.OWNER_LC }}/rift-proxy:${{ steps.vars.outputs.VERSION }}-amd64
+          build-args: |
+            VERSION=${{ steps.vars.outputs.VERSION }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.vars.outputs.BUILD_DATE }}
+          provenance: false
+
+      # Build and push arm64 image to GHCR (continue on error)
+      - name: Build and push arm64 to GHCR
+        continue-on-error: true
+        uses: docker/build-push-action@v5
+        with:
+          context: ./binaries/arm64
+          file: ./crates/rift-http-proxy/Dockerfile.prebuilt
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.REGISTRY_GHCR }}/${{ steps.vars.outputs.OWNER_LC }}/rift-proxy:${{ steps.vars.outputs.VERSION }}-arm64
           build-args: |
             VERSION=${{ steps.vars.outputs.VERSION }}
             VCS_REF=${{ github.sha }}
@@ -145,6 +173,7 @@ jobs:
             ${{ env.REGISTRY_DOCKERHUB }}/${REPO}:${VERSION}-arm64
 
       - name: Create and push GHCR manifest
+        continue-on-error: true
         run: |
           VERSION="${{ steps.vars.outputs.VERSION }}"
           REPO="${{ steps.vars.outputs.OWNER_LC }}/rift-proxy"
