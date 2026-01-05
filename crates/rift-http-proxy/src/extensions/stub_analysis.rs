@@ -417,6 +417,7 @@ mod tests {
             predicates,
             responses: vec![],
             scenario_name: None,
+            optimized_predicates: None,
         }
     }
 
@@ -427,6 +428,7 @@ mod tests {
             predicates,
             responses: vec![],
             scenario_name: None,
+            optimized_predicates: None,
         }
     }
 

@@ -32,7 +32,6 @@
 
 use regex::{Regex, RegexSet};
 use serde_json::Value as JsonValue;
-use std::borrow::Cow;
 use std::collections::HashMap as StdHashMap;
 
 /// A string with optional case-insensitive matching.
@@ -779,12 +778,12 @@ mod tests {
     #[test]
     fn test_string_predicate_simple() {
         let pred = StringPredicate::empty_simple()
-            .with_starts_with(MaybeSensitiveStr::new("http".to_string(), true))
+            .with_starts_with(MaybeSensitiveStr::new("http://".to_string(), true))
             .with_contains(MaybeSensitiveStr::new("api".to_string(), true))
             .with_ends_with(MaybeSensitiveStr::new("json".to_string(), true));
 
         assert!(pred.matches("http://example.com/api/data.json"));
-        assert!(!pred.matches("https://example.com/api/data.json")); // doesn't start with http
+        assert!(!pred.matches("https://example.com/api/data.json")); // doesn't start with http://
         assert!(!pred.matches("http://example.com/users.json")); // doesn't contain api
         assert!(!pred.matches("http://example.com/api/data.xml")); // doesn't end with json
     }

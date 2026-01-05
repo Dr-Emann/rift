@@ -741,10 +741,10 @@ mod tests {
         let optimized = optimize_predicates(&predicates).unwrap();
 
         // Should have body predicate
-        assert!(optimized.body.is_some());
+        assert!(!optimized.body.is_empty());
 
         // Test matching
-        let body_pred = optimized.body.unwrap();
+        let body_pred = &optimized.body[0];
         assert!(body_pred.matches("abc123456")); // starts with abc, contains 123 and 456
         assert!(!body_pred.matches("123456")); // doesn't start with abc
         assert!(!body_pred.matches("abc456")); // doesn't contain 123
@@ -776,16 +776,16 @@ mod tests {
         let optimized = optimize_predicates(&predicates).unwrap();
 
         // Should have both path and body predicates
-        assert!(optimized.path.is_some());
-        assert!(optimized.body.is_some());
+        assert!(!optimized.path.is_empty());
+        assert!(!optimized.body.is_empty());
 
         // Test path matching
-        let path_pred = optimized.path.unwrap();
+        let path_pred = &optimized.path[0];
         assert!(path_pred.matches("/my_path/123"));
         assert!(!path_pred.matches("/my_path/abc"));
 
         // Test body matching
-        let body_pred = optimized.body.unwrap();
+        let body_pred = &optimized.body[0];
         assert!(body_pred.matches("busy-42"));
         assert!(!body_pred.matches("busy-abc"));
     }
@@ -825,9 +825,9 @@ mod tests {
 
         let optimized = optimize_predicates(&predicates).unwrap();
 
-        assert!(optimized.body.is_some());
+        assert!(!optimized.body.is_empty());
 
-        let body_pred = optimized.body.unwrap();
+        let body_pred = &optimized.body[0];
         assert!(body_pred.matches("abc123busy-42")); // starts with abc, contains 123, matches regex
         assert!(!body_pred.matches("abc123busy-abc")); // regex doesn't match
         assert!(!body_pred.matches("abc456busy-42")); // doesn't contain 123

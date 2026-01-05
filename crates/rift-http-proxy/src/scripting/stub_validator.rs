@@ -271,6 +271,7 @@ mod tests {
                 },
             }],
             scenario_name: None,
+            optimized_predicates: None,
         }
     }
 
@@ -282,6 +283,7 @@ mod tests {
                 inject: code.to_string(),
             }],
             scenario_name: None,
+            optimized_predicates: None,
         }
     }
 
@@ -366,6 +368,7 @@ mod tests {
                     },
                 }],
                 scenario_name: None,
+                optimized_predicates: None,
             },
             Stub {
                 id: None, // No id, will use stub[1]
@@ -381,6 +384,7 @@ mod tests {
                     },
                 }],
                 scenario_name: None,
+                optimized_predicates: None,
             },
         ];
         let result = validate_stubs(&stubs);

@@ -18,7 +18,7 @@ license = "Apache-2.0"
 authors = ["Rift Contributors"]
 repository = "https://github.com/EtaCassiopeia/rift"
 homepage = "https://github.com/EtaCassiopeia/rift"
-rust-version = "1.92"
+rust-version = "1.80"
 
 [workspace.dependencies]
 # Async runtime
