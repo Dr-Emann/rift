@@ -102,7 +102,8 @@ impl StringPredicateBuilder {
                 let mut simple = StringPredicate::empty_simple();
 
                 if let Some((pattern, case_sensitive)) = self.starts_with {
-                    simple = simple.with_starts_with(MaybeSensitiveStr::new(pattern, case_sensitive));
+                    simple =
+                        simple.with_starts_with(MaybeSensitiveStr::new(pattern, case_sensitive));
                 }
 
                 if let Some((pattern, case_sensitive)) = self.ends_with {
@@ -143,7 +144,10 @@ impl FieldPredicateBuilder {
         // Convert PredicateSelector to ValueSelector if present
         let value_selector = self.selector.map(|s| match s {
             PredicateSelector::JsonPath { selector } => ValueSelector::JsonPath(selector),
-            PredicateSelector::XPath { selector, namespaces } => ValueSelector::XPath {
+            PredicateSelector::XPath {
+                selector,
+                namespaces,
+            } => ValueSelector::XPath {
                 selector,
                 namespaces,
             },
@@ -204,9 +208,7 @@ impl From<&Option<PredicateSelector>> for SelectorKey {
             Some(PredicateSelector::JsonPath { selector }) => {
                 SelectorKey::JsonPath(selector.clone())
             }
-            Some(PredicateSelector::XPath { selector, .. }) => {
-                SelectorKey::XPath(selector.clone())
-            }
+            Some(PredicateSelector::XPath { selector, .. }) => SelectorKey::XPath(selector.clone()),
         }
     }
 }
@@ -424,13 +426,18 @@ fn process_predicate_operation(
         PredicateOperation::And(children) => {
             // AND predicates naturally combine by adding to the same field builders
             for child in children {
-                let child_case_sensitive = child.parameters.case_sensitive.unwrap_or(case_sensitive);
+                let child_case_sensitive =
+                    child.parameters.case_sensitive.unwrap_or(case_sensitive);
                 let child_except = if child.parameters.except.is_empty() {
                     except_pattern.clone()
                 } else {
                     Some(child.parameters.except.clone())
                 };
-                let child_selector = child.parameters.selector.clone().or_else(|| selector.clone());
+                let child_selector = child
+                    .parameters
+                    .selector
+                    .clone()
+                    .or_else(|| selector.clone());
                 process_predicate_operation(
                     &child.operation,
                     child_case_sensitive,

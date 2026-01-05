@@ -520,9 +520,8 @@ mod tests {
             rule_id: "test-rule".to_string(),
         };
 
-        if let CompiledScript::Rhai { rule_id, .. } = compiled {
-            assert_eq!(rule_id, "test-rule");
-        }
+        let CompiledScript::Rhai { rule_id, .. } = compiled;
+        assert_eq!(rule_id, "test-rule");
     }
 
     #[test]
@@ -538,9 +537,8 @@ mod tests {
         };
 
         let cloned = compiled.clone();
-        if let CompiledScript::Rhai { rule_id, .. } = cloned {
-            assert_eq!(rule_id, "clone-test");
-        }
+        let CompiledScript::Rhai { rule_id, .. } = cloned;
+        assert_eq!(rule_id, "clone-test");
     }
 
     #[cfg(feature = "lua")]

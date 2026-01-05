@@ -790,8 +790,8 @@ mod tests {
 
     #[test]
     fn test_string_predicate_equals() {
-        let pred =
-            StringPredicate::empty_simple().with_equals(MaybeSensitiveStr::new("GET".to_string(), true));
+        let pred = StringPredicate::empty_simple()
+            .with_equals(MaybeSensitiveStr::new("GET".to_string(), true));
 
         assert!(pred.matches("GET"));
         assert!(!pred.matches("POST"));
@@ -859,7 +859,8 @@ mod tests {
     #[test]
     fn test_optimized_predicates_not_empty() {
         let mut pred = OptimizedPredicates::new();
-        pred.method.push(FieldPredicate::new(StringPredicate::empty_simple()));
+        pred.method
+            .push(FieldPredicate::new(StringPredicate::empty_simple()));
         assert!(!pred.is_empty());
     }
 

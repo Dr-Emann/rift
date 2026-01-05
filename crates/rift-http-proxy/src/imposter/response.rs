@@ -20,7 +20,11 @@ fn truncate_with_ellipsis(text: &str, max_len: usize) -> String {
         return text.to_string();
     }
 
-    let end = text.floor_char_boundary(max_len);
+    // Find the largest valid UTF-8 boundary <= max_len
+    let mut end = max_len;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
     format!("{}...", &text[..end])
 }
 

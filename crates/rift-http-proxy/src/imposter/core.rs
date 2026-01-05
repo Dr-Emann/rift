@@ -248,9 +248,7 @@ impl Imposter {
         let form = Self::parse_form_data(headers, body);
 
         // Parse query string once for optimized matching
-        let query_map = query
-            .map(parse_query_string)
-            .unwrap_or_else(HashMap::new);
+        let query_map = query.map(parse_query_string).unwrap_or_default();
 
         for (index, stub_state) in stubs.iter().enumerate() {
             let stub = &stub_state.stub;

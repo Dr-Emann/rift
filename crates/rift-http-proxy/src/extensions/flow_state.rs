@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -88,7 +88,7 @@ pub fn create_flow_store(config: &crate::config::FlowStateConfig) -> Result<Arc<
             Ok(Arc::new(InMemoryFlowStore::new(config.ttl_seconds as u64)))
         }
         "redis" => {
-            let redis_config = config
+            let _redis_config = config
                 .redis
                 .as_ref()
                 .ok_or_else(|| anyhow!("Redis backend selected but no redis config provided"))?;
