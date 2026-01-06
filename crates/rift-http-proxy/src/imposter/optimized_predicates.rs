@@ -34,43 +34,31 @@ use regex::{Regex, RegexSet};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap as StdHashMap;
 
-/// A string with optional case-insensitive matching.
+/// A string with optional ASCII case-insensitive matching.
 ///
-/// For case-insensitive matching, stores both original and lowercase versions
-/// to avoid repeated allocations during matching.
+/// For ASCII case-insensitive matching, compares bytes directly without allocation.
+/// For non-ASCII case-insensitive matching, use a regex with (?i) flag instead.
 #[derive(Debug, Clone)]
 pub struct MaybeSensitiveStr {
-    /// Original string
+    /// Pattern string
     s: String,
-    /// True if matching should be case-sensitive (ASCII)
+    /// True if matching should be case-sensitive
     ascii_case_sensitive: bool,
-    /// Cached lowercase version (only populated if case-insensitive)
-    lower: Option<String>,
 }
 
 impl MaybeSensitiveStr {
     /// Create a new MaybeSensitiveStr.
     pub fn new(s: String, ascii_case_sensitive: bool) -> Self {
-        let lower = if ascii_case_sensitive {
-            None
-        } else {
-            Some(s.to_ascii_lowercase())
-        };
         Self {
             s,
             ascii_case_sensitive,
-            lower,
         }
     }
 
-    /// Get the pattern to match against, handling case sensitivity.
+    /// Get the pattern string.
     #[inline]
     pub fn pattern(&self) -> &str {
-        if self.ascii_case_sensitive {
-            &self.s
-        } else {
-            self.lower.as_ref().unwrap()
-        }
+        &self.s
     }
 
     /// Check if a value equals this pattern.
@@ -83,39 +71,58 @@ impl MaybeSensitiveStr {
         }
     }
 
-    /// Check if a value starts with this pattern.
+    /// Check if a value starts with this pattern (ASCII case-insensitive).
     #[inline]
     pub fn starts_with(&self, value: &str) -> bool {
         if self.ascii_case_sensitive {
             value.starts_with(&self.s)
         } else {
-            value
-                .to_ascii_lowercase()
-                .starts_with(self.lower.as_ref().unwrap())
+            // ASCII case-insensitive comparison without allocation
+            if value.len() < self.s.len() {
+                return false;
+            }
+            value[..self.s.len()].eq_ignore_ascii_case(&self.s)
         }
     }
 
-    /// Check if a value ends with this pattern.
+    /// Check if a value ends with this pattern (ASCII case-insensitive).
     #[inline]
     pub fn ends_with(&self, value: &str) -> bool {
         if self.ascii_case_sensitive {
             value.ends_with(&self.s)
         } else {
-            value
-                .to_ascii_lowercase()
-                .ends_with(self.lower.as_ref().unwrap())
+            // ASCII case-insensitive comparison without allocation
+            if value.len() < self.s.len() {
+                return false;
+            }
+            value[value.len() - self.s.len()..].eq_ignore_ascii_case(&self.s)
         }
     }
 
-    /// Check if a value contains this pattern.
+    /// Check if a value contains this pattern (ASCII case-insensitive).
     #[inline]
     pub fn contained_in(&self, value: &str) -> bool {
         if self.ascii_case_sensitive {
             value.contains(&self.s)
         } else {
-            value
-                .to_ascii_lowercase()
-                .contains(self.lower.as_ref().unwrap())
+            // ASCII case-insensitive substring search without allocation
+            // Use a simple sliding window approach
+            if self.s.is_empty() {
+                return true;
+            }
+            if value.len() < self.s.len() {
+                return false;
+            }
+
+            let pattern_bytes = self.s.as_bytes();
+            let value_bytes = value.as_bytes();
+
+            for i in 0..=(value.len() - self.s.len()) {
+                if value_bytes[i..i + self.s.len()].eq_ignore_ascii_case(pattern_bytes) {
+                    return true;
+                }
+            }
+            false
         }
     }
 }
