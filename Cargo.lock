@@ -3462,6 +3462,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "matchit",
+ "memchr",
  "mlua",
  "num_cpus",
  "once_cell",

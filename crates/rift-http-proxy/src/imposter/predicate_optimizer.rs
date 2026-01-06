@@ -55,12 +55,32 @@ impl StringPredicateBuilder {
     /// Build the final StringPredicate.
     ///
     /// This method chooses the optimal representation based on what operations were added.
+    /// Case-insensitive contains operations are converted to regexes.
     fn build(self) -> Result<StringPredicate, regex::Error> {
+        // Separate case-sensitive and case-insensitive contains
+        let mut case_sensitive_contains = Vec::new();
+        let mut case_insensitive_regexes = Vec::new();
+
+        for (pattern, case_sensitive) in self.contains {
+            if case_sensitive {
+                case_sensitive_contains.push(pattern);
+            } else {
+                // Convert case-insensitive contains to regex with (?i) flag
+                // Escape special regex characters
+                let escaped = regex::escape(&pattern);
+                case_insensitive_regexes.push(format!("(?i){}", escaped));
+            }
+        }
+
+        // Merge case-insensitive contains regexes with explicit regexes
+        let mut all_regexes = self.regexes;
+        all_regexes.extend(case_insensitive_regexes);
+
         let has_simple = self.starts_with.is_some()
             || self.ends_with.is_some()
-            || !self.contains.is_empty()
+            || !case_sensitive_contains.is_empty()
             || self.equals.is_some();
-        let has_regexes = !self.regexes.is_empty();
+        let has_regexes = !all_regexes.is_empty();
 
         match (has_simple, has_regexes) {
             (false, false) => {
@@ -79,8 +99,9 @@ impl StringPredicateBuilder {
                     pred = pred.with_ends_with(MaybeSensitiveStr::new(pattern, case_sensitive));
                 }
 
-                for (pattern, case_sensitive) in self.contains {
-                    pred = pred.with_contains(MaybeSensitiveStr::new(pattern, case_sensitive));
+                // Only add case-sensitive contains (case-insensitive are converted to regex)
+                for pattern in case_sensitive_contains {
+                    pred = pred.with_contains(MaybeSensitiveStr::new(pattern, true));
                 }
 
                 if let Some((pattern, case_sensitive)) = self.equals {
@@ -91,7 +112,7 @@ impl StringPredicateBuilder {
             }
             (false, true) => {
                 // Only regexes - use RegexSet
-                let set = RegexSet::new(&self.regexes)?;
+                let set = RegexSet::new(&all_regexes)?;
                 Ok(StringPredicate::Regexes {
                     set,
                     require_all: true, // All regexes must match (AND)
@@ -110,15 +131,16 @@ impl StringPredicateBuilder {
                     simple = simple.with_ends_with(MaybeSensitiveStr::new(pattern, case_sensitive));
                 }
 
-                for (pattern, case_sensitive) in self.contains {
-                    simple = simple.with_contains(MaybeSensitiveStr::new(pattern, case_sensitive));
+                // Only add case-sensitive contains
+                for pattern in case_sensitive_contains {
+                    simple = simple.with_contains(MaybeSensitiveStr::new(pattern, true));
                 }
 
                 if let Some((pattern, case_sensitive)) = self.equals {
                     simple = simple.with_equals(MaybeSensitiveStr::new(pattern, case_sensitive));
                 }
 
-                let regexes = RegexSet::new(&self.regexes)?;
+                let regexes = RegexSet::new(&all_regexes)?;
 
                 Ok(StringPredicate::Combined {
                     simple: Box::new(simple),
