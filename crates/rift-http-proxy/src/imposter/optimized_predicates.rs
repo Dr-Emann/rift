@@ -151,6 +151,9 @@ pub enum StringPredicate {
         regexes: RegexSet,
         require_all_regexes: bool,
     },
+    /// A predicate that never matches.
+    /// Used when regex compilation fails or predicates are invalid.
+    Never,
 }
 
 impl StringPredicate {
@@ -234,6 +237,7 @@ impl StringPredicate {
                     matches.matched_any()
                 }
             }
+            StringPredicate::Never => false,
         }
     }
 

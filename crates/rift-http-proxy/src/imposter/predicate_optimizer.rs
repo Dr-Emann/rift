@@ -56,7 +56,8 @@ impl StringPredicateBuilder {
     ///
     /// This method chooses the optimal representation based on what operations were added.
     /// Case-insensitive contains operations are converted to regexes.
-    fn build(self) -> Result<StringPredicate, regex::Error> {
+    /// If regex compilation fails, returns a Never predicate that never matches.
+    fn build(self) -> StringPredicate {
         // Separate case-sensitive and case-insensitive contains
         let mut case_sensitive_contains = Vec::new();
         let mut case_insensitive_regexes = Vec::new();
@@ -85,7 +86,7 @@ impl StringPredicateBuilder {
         match (has_simple, has_regexes) {
             (false, false) => {
                 // No constraints at all
-                Ok(StringPredicate::empty_simple())
+                StringPredicate::empty_simple()
             }
             (true, false) => {
                 // Only simple operations
@@ -108,15 +109,20 @@ impl StringPredicateBuilder {
                     pred = pred.with_equals(MaybeSensitiveStr::new(pattern, case_sensitive));
                 }
 
-                Ok(pred)
+                pred
             }
             (false, true) => {
                 // Only regexes - use RegexSet
-                let set = RegexSet::new(&all_regexes)?;
-                Ok(StringPredicate::Regexes {
-                    set,
-                    require_all: true, // All regexes must match (AND)
-                })
+                match RegexSet::new(&all_regexes) {
+                    Ok(set) => StringPredicate::Regexes {
+                        set,
+                        require_all: true, // All regexes must match (AND)
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to compile regex patterns: {}", e);
+                        StringPredicate::Never
+                    }
+                }
             }
             (true, true) => {
                 // Both simple and regexes - use Combined
@@ -140,13 +146,17 @@ impl StringPredicateBuilder {
                     simple = simple.with_equals(MaybeSensitiveStr::new(pattern, case_sensitive));
                 }
 
-                let regexes = RegexSet::new(&all_regexes)?;
-
-                Ok(StringPredicate::Combined {
-                    simple: Box::new(simple),
-                    regexes,
-                    require_all_regexes: true,
-                })
+                match RegexSet::new(&all_regexes) {
+                    Ok(regexes) => StringPredicate::Combined {
+                        simple: Box::new(simple),
+                        regexes,
+                        require_all_regexes: true,
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to compile regex patterns: {}", e);
+                        StringPredicate::Never
+                    }
+                }
             }
         }
     }
@@ -162,7 +172,7 @@ struct FieldPredicateBuilder {
 }
 
 impl FieldPredicateBuilder {
-    fn build(self) -> Result<FieldPredicate, regex::Error> {
+    fn build(self) -> FieldPredicate {
         // Convert PredicateSelector to ValueSelector if present
         let value_selector = self.selector.map(|s| match s {
             PredicateSelector::JsonPath { selector } => ValueSelector::JsonPath(selector),
@@ -179,24 +189,31 @@ impl FieldPredicateBuilder {
         let value_pred = if let Some(obj_pred) = self.object_pred {
             ValuePredicate::Object(obj_pred)
         } else {
-            ValuePredicate::String(self.string_pred.build()?)
+            ValuePredicate::String(self.string_pred.build())
         };
 
         match (self.except_pattern, value_selector) {
-            (Some(pattern), Some(selector)) => {
-                let except_regex = Regex::new(&pattern)?;
-                Ok(FieldPredicate::with_except_and_selector_value(
+            (Some(pattern), Some(selector)) => match Regex::new(&pattern) {
+                Ok(except_regex) => FieldPredicate::with_except_and_selector_value(
                     value_pred,
                     except_regex,
                     selector,
-                ))
-            }
-            (Some(pattern), None) => {
-                let except_regex = Regex::new(&pattern)?;
-                Ok(FieldPredicate::with_except_value(value_pred, except_regex))
-            }
-            (None, Some(selector)) => Ok(FieldPredicate::with_selector_value(value_pred, selector)),
-            (None, None) => Ok(FieldPredicate::new_value(value_pred)),
+                ),
+                Err(e) => {
+                    tracing::warn!("Failed to compile except pattern regex: {}", e);
+                    // If except pattern is invalid, create a Never predicate
+                    FieldPredicate::new_value(ValuePredicate::String(StringPredicate::Never))
+                }
+            },
+            (Some(pattern), None) => match Regex::new(&pattern) {
+                Ok(except_regex) => FieldPredicate::with_except_value(value_pred, except_regex),
+                Err(e) => {
+                    tracing::warn!("Failed to compile except pattern regex: {}", e);
+                    FieldPredicate::new_value(ValuePredicate::String(StringPredicate::Never))
+                }
+            },
+            (None, Some(selector)) => FieldPredicate::with_selector_value(value_pred, selector),
+            (None, None) => FieldPredicate::new_value(value_pred),
         }
     }
 
@@ -261,7 +278,7 @@ struct FieldBuilders {
 ///
 /// This function analyzes all predicates and groups operations by field,
 /// enabling optimizations like RegexSet for multiple regex patterns on the same field.
-pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicates, regex::Error> {
+pub fn optimize_predicates(predicates: &[Predicate]) -> OptimizedPredicates {
     let mut builders = FieldBuilders::default();
 
     // Process each predicate and add to appropriate field builders
@@ -280,32 +297,32 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
             except_pattern,
             selector,
             &mut builders,
-        )?;
+        );
     }
 
     // Build final optimized predicates
-    Ok(OptimizedPredicates {
+    OptimizedPredicates {
         // Build all method predicates (one per unique selector)
         method: builders
             .method
             .into_iter()
             .filter(|(_, v)| !v.is_empty())
             .map(|(_, v)| v.build())
-            .collect::<Result<Vec<_>, regex::Error>>()?,
+            .collect(),
         // Build all path predicates (one per unique selector)
         path: builders
             .path
             .into_iter()
             .filter(|(_, v)| !v.is_empty())
             .map(|(_, v)| v.build())
-            .collect::<Result<Vec<_>, regex::Error>>()?,
+            .collect(),
         // Build all body predicates (one per unique selector)
         body: builders
             .body
             .into_iter()
             .filter(|(_, v)| !v.is_empty())
             .map(|(_, v)| v.build())
-            .collect::<Result<Vec<_>, regex::Error>>()?,
+            .collect(),
         // Build query predicates: param name -> Vec<FieldPredicate>
         query: builders
             .query
@@ -315,13 +332,11 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
                     .into_iter()
                     .filter(|(_, v)| !v.is_empty())
                     .map(|(_, v)| v.build())
-                    .collect::<Result<Vec<_>, regex::Error>>()?;
-                Ok((param_name, preds))
+                    .collect();
+                (param_name, preds)
             })
-            .filter(|r: &Result<(String, Vec<FieldPredicate>), regex::Error>| {
-                r.as_ref().map(|(_, v)| !v.is_empty()).unwrap_or(false)
-            })
-            .collect::<Result<Vec<_>, regex::Error>>()?,
+            .filter(|(_, v)| !v.is_empty())
+            .collect(),
         // Build header predicates: header name -> Vec<FieldPredicate>
         headers: builders
             .headers
@@ -331,27 +346,25 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
                     .into_iter()
                     .filter(|(_, v)| !v.is_empty())
                     .map(|(_, v)| v.build())
-                    .collect::<Result<Vec<_>, regex::Error>>()?;
-                Ok((header_name, preds))
+                    .collect();
+                (header_name, preds)
             })
-            .filter(|r: &Result<(String, Vec<FieldPredicate>), regex::Error>| {
-                r.as_ref().map(|(_, v)| !v.is_empty()).unwrap_or(false)
-            })
-            .collect::<Result<Vec<_>, regex::Error>>()?,
+            .filter(|(_, v)| !v.is_empty())
+            .collect(),
         // Build all request_from predicates (one per unique selector)
         request_from: builders
             .request_from
             .into_iter()
             .filter(|(_, v)| !v.is_empty())
             .map(|(_, v)| v.build())
-            .collect::<Result<Vec<_>, regex::Error>>()?,
+            .collect(),
         // Build all ip predicates (one per unique selector)
         ip: builders
             .ip
             .into_iter()
             .filter(|(_, v)| !v.is_empty())
             .map(|(_, v)| v.build())
-            .collect::<Result<Vec<_>, regex::Error>>()?,
+            .collect(),
         // Build form predicates: field name -> Vec<FieldPredicate>
         form: builders
             .form
@@ -361,14 +374,12 @@ pub fn optimize_predicates(predicates: &[Predicate]) -> Result<OptimizedPredicat
                     .into_iter()
                     .filter(|(_, v)| !v.is_empty())
                     .map(|(_, v)| v.build())
-                    .collect::<Result<Vec<_>, regex::Error>>()?;
-                Ok((field_name, preds))
+                    .collect();
+                (field_name, preds)
             })
-            .filter(|r: &Result<(String, Vec<FieldPredicate>), regex::Error>| {
-                r.as_ref().map(|(_, v)| !v.is_empty()).unwrap_or(false)
-            })
-            .collect::<Result<Vec<_>, regex::Error>>()?,
-    })
+            .filter(|(_, v)| !v.is_empty())
+            .collect(),
+    }
 }
 
 /// Process a single predicate operation and add to field builders.
@@ -378,7 +389,7 @@ fn process_predicate_operation(
     except_pattern: Option<String>,
     selector: Option<PredicateSelector>,
     builders: &mut FieldBuilders,
-) -> Result<(), regex::Error> {
+) {
     match operation {
         PredicateOperation::Equals(fields) => {
             process_fields(
@@ -391,7 +402,7 @@ fn process_predicate_operation(
                 |builder, value, cs| {
                     builder.string_pred.add_equals(value, cs);
                 },
-            )?;
+            );
         }
         PredicateOperation::Contains(fields) => {
             process_fields(
@@ -404,7 +415,7 @@ fn process_predicate_operation(
                 |builder, value, cs| {
                     builder.string_pred.add_contains(value, cs);
                 },
-            )?;
+            );
         }
         PredicateOperation::StartsWith(fields) => {
             process_fields(
@@ -417,7 +428,7 @@ fn process_predicate_operation(
                 |builder, value, cs| {
                     builder.string_pred.add_starts_with(value, cs);
                 },
-            )?;
+            );
         }
         PredicateOperation::EndsWith(fields) => {
             process_fields(
@@ -430,7 +441,7 @@ fn process_predicate_operation(
                 |builder, value, cs| {
                     builder.string_pred.add_ends_with(value, cs);
                 },
-            )?;
+            );
         }
         PredicateOperation::Matches(fields) => {
             process_fields(
@@ -443,7 +454,7 @@ fn process_predicate_operation(
                 |builder, value, _cs| {
                     builder.string_pred.add_regex(value);
                 },
-            )?;
+            );
         }
         PredicateOperation::And(children) => {
             // AND predicates naturally combine by adding to the same field builders
@@ -466,7 +477,7 @@ fn process_predicate_operation(
                     child_except,
                     child_selector,
                     builders,
-                )?;
+                );
             }
         }
         PredicateOperation::Or(_children) => {
@@ -487,8 +498,6 @@ fn process_predicate_operation(
             // TODO: Implement Exists optimization
         }
     }
-
-    Ok(())
 }
 
 /// Process fields from a predicate operation and add to appropriate builders.
@@ -497,7 +506,7 @@ fn add_object_to_builder(
     builder: &mut FieldPredicateBuilder,
     value: &JsonValue,
     operation_type: PredicateOperationType,
-) -> Result<(), regex::Error> {
+) {
     let obj_pred = match operation_type {
         PredicateOperationType::Equals => ObjectPredicate::Equals(value.clone()),
         PredicateOperationType::DeepEquals => ObjectPredicate::DeepEquals(value.clone()),
@@ -508,18 +517,29 @@ fn add_object_to_builder(
                 let mut regexes = HashMap::new();
                 for (key, val) in obj {
                     if let JsonValue::String(pattern) = val {
-                        regexes.insert(key.clone(), Regex::new(pattern)?);
+                        match Regex::new(pattern) {
+                            Ok(regex) => {
+                                regexes.insert(key.clone(), regex);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to compile regex pattern for key '{}': {}",
+                                    key,
+                                    e
+                                );
+                                // Skip this regex, continue with others
+                            }
+                        }
                     }
                 }
                 ObjectPredicate::Matches(regexes)
             } else {
-                return Ok(()); // Skip non-object matches
+                return; // Skip non-object matches
             }
         }
-        _ => return Ok(()), // Other operations don't support objects
+        _ => return, // Other operations don't support objects
     };
     builder.object_pred = Some(obj_pred);
-    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -540,8 +560,7 @@ fn process_fields<F>(
     builders: &mut FieldBuilders,
     operation_type: PredicateOperationType,
     mut add_string_to_builder: F,
-) -> Result<(), regex::Error>
-where
+) where
     F: FnMut(&mut FieldPredicateBuilder, String, bool),
 {
     for (field_name, value) in fields {
@@ -559,7 +578,7 @@ where
                     builder.selector = Some(sel.clone());
                 }
                 if is_object_value {
-                    add_object_to_builder(builder, value, operation_type)?;
+                    add_object_to_builder(builder, value, operation_type);
                 } else {
                     let value_str = value.as_str().unwrap_or("").to_string();
                     add_string_to_builder(builder, value_str, case_sensitive);
@@ -575,7 +594,7 @@ where
                     builder.selector = Some(sel.clone());
                 }
                 if is_object_value {
-                    add_object_to_builder(builder, value, operation_type)?;
+                    add_object_to_builder(builder, value, operation_type);
                 } else {
                     let value_str = value.as_str().unwrap_or("").to_string();
                     add_string_to_builder(builder, value_str, case_sensitive);
@@ -593,7 +612,7 @@ where
                 }
                 if is_object_value {
                     // Object matching (JSON body)
-                    add_object_to_builder(builder, value, operation_type)?;
+                    add_object_to_builder(builder, value, operation_type);
                 } else {
                     // String matching
                     let value_str = value.as_str().unwrap_or("").to_string();
@@ -610,7 +629,7 @@ where
                     builder.selector = Some(sel.clone());
                 }
                 if is_object_value {
-                    add_object_to_builder(builder, value, operation_type)?;
+                    add_object_to_builder(builder, value, operation_type);
                 } else {
                     let value_str = value.as_str().unwrap_or("").to_string();
                     add_string_to_builder(builder, value_str, case_sensitive);
@@ -626,7 +645,7 @@ where
                     builder.selector = Some(sel.clone());
                 }
                 if is_object_value {
-                    add_object_to_builder(builder, value, operation_type)?;
+                    add_object_to_builder(builder, value, operation_type);
                 } else {
                     let value_str = value.as_str().unwrap_or("").to_string();
                     add_string_to_builder(builder, value_str, case_sensitive);
@@ -650,7 +669,7 @@ where
                             builder.selector = Some(sel.clone());
                         }
                         if param_value.is_object() || param_value.is_array() {
-                            add_object_to_builder(builder, param_value, operation_type)?;
+                            add_object_to_builder(builder, param_value, operation_type);
                         } else {
                             let param_value_str = param_value.as_str().unwrap_or("").to_string();
                             add_string_to_builder(builder, param_value_str, case_sensitive);
@@ -677,7 +696,7 @@ where
                             builder.selector = Some(sel.clone());
                         }
                         if header_value.is_object() || header_value.is_array() {
-                            add_object_to_builder(builder, header_value, operation_type)?;
+                            add_object_to_builder(builder, header_value, operation_type);
                         } else {
                             let header_value_str = header_value.as_str().unwrap_or("").to_string();
                             add_string_to_builder(builder, header_value_str, case_sensitive);
@@ -703,7 +722,7 @@ where
                             builder.selector = Some(sel.clone());
                         }
                         if form_value.is_object() || form_value.is_array() {
-                            add_object_to_builder(builder, form_value, operation_type)?;
+                            add_object_to_builder(builder, form_value, operation_type);
                         } else {
                             let form_value_str = form_value.as_str().unwrap_or("").to_string();
                             add_string_to_builder(builder, form_value_str, case_sensitive);
@@ -716,8 +735,6 @@ where
             }
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -767,7 +784,7 @@ mod tests {
             ),
         ];
 
-        let optimized = optimize_predicates(&predicates).unwrap();
+        let optimized = optimize_predicates(&predicates);
 
         // Should have body predicate
         assert!(!optimized.body.is_empty());
@@ -802,7 +819,7 @@ mod tests {
             ),
         ];
 
-        let optimized = optimize_predicates(&predicates).unwrap();
+        let optimized = optimize_predicates(&predicates);
 
         // Should have both path and body predicates
         assert!(!optimized.path.is_empty());
@@ -852,7 +869,7 @@ mod tests {
             ),
         ];
 
-        let optimized = optimize_predicates(&predicates).unwrap();
+        let optimized = optimize_predicates(&predicates);
 
         assert!(!optimized.body.is_empty());
 
@@ -870,7 +887,7 @@ mod tests {
 
         let predicates = vec![make_predicate(PredicateOperation::Matches(fields), true)];
 
-        let optimized = optimize_predicates(&predicates).unwrap();
+        let optimized = optimize_predicates(&predicates);
 
         assert!(!optimized.path.is_empty());
         assert!(!optimized.body.is_empty());
@@ -925,7 +942,7 @@ mod tests {
         ];
 
         // Optimize to per-field organization
-        let optimized = optimize_predicates(&predicates).unwrap();
+        let optimized = optimize_predicates(&predicates);
 
         // Verify the structure is optimized per-field
         assert!(!optimized.path.is_empty(), "Path predicate should exist");
@@ -1067,7 +1084,7 @@ mod tests {
             ),
         ];
 
-        let optimized = optimize_predicates(&predicates).unwrap();
+        let optimized = optimize_predicates(&predicates);
 
         // Should be optimized to the same structure as the non-AND version
         assert!(!optimized.path.is_empty());
@@ -1105,7 +1122,7 @@ mod tests {
 
         let predicates = vec![make_predicate(PredicateOperation::Equals(fields), true)];
 
-        let optimized = optimize_predicates(&predicates).unwrap();
+        let optimized = optimize_predicates(&predicates);
 
         assert!(!optimized.body.is_empty(), "Body predicate should exist");
 

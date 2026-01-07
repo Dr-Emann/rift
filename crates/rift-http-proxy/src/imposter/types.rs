@@ -137,18 +137,11 @@ pub struct Stub {
 impl Stub {
     /// Build optimized predicates from the regular predicates.
     /// Returns a new Stub with optimized predicates populated.
-    /// If optimization fails, the optimized_predicates field will be None.
+    /// Optimization always succeeds - invalid regexes become Never predicates.
     pub fn with_optimized_predicates(mut self) -> Self {
         if !self.predicates.is_empty() {
-            match super::predicate_optimizer::optimize_predicates(&self.predicates) {
-                Ok(optimized) => {
-                    self.optimized_predicates = Some(optimized);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to optimize predicates: {}", e);
-                    self.optimized_predicates = None;
-                }
-            }
+            let optimized = super::predicate_optimizer::optimize_predicates(&self.predicates);
+            self.optimized_predicates = Some(optimized);
         }
         self
     }
