@@ -125,32 +125,50 @@ impl StringPredicateBuilder {
                 }
             }
             (true, true) => {
-                // Both simple and regexes - use Combined
-                let mut simple = StringPredicate::empty_simple();
+                // Both simple and regexes - convert simple operations to regex patterns
+                // and combine everything into a single RegexSet
 
+                // Convert starts_with to regex
                 if let Some((pattern, case_sensitive)) = self.starts_with {
-                    simple =
-                        simple.with_starts_with(MaybeSensitiveStr::new(pattern, case_sensitive));
+                    let escaped = regex::escape(&pattern);
+                    if case_sensitive {
+                        all_regexes.push(format!("^{}", escaped));
+                    } else {
+                        all_regexes.push(format!("(?i)^{}", escaped));
+                    }
                 }
 
+                // Convert ends_with to regex
                 if let Some((pattern, case_sensitive)) = self.ends_with {
-                    simple = simple.with_ends_with(MaybeSensitiveStr::new(pattern, case_sensitive));
+                    let escaped = regex::escape(&pattern);
+                    if case_sensitive {
+                        all_regexes.push(format!("{}$", escaped));
+                    } else {
+                        all_regexes.push(format!("(?i){}$", escaped));
+                    }
                 }
 
-                // Only add case-sensitive contains
+                // Convert case-sensitive contains to regex
                 for pattern in case_sensitive_contains {
-                    simple = simple.with_contains(pattern);
+                    let escaped = regex::escape(&pattern);
+                    all_regexes.push(escaped);
                 }
 
+                // Convert equals to regex
                 if let Some((pattern, case_sensitive)) = self.equals {
-                    simple = simple.with_equals(MaybeSensitiveStr::new(pattern, case_sensitive));
+                    let escaped = regex::escape(&pattern);
+                    if case_sensitive {
+                        all_regexes.push(format!("^{}$", escaped));
+                    } else {
+                        all_regexes.push(format!("(?i)^{}$", escaped));
+                    }
                 }
 
+                // Build RegexSet with all patterns
                 match RegexSet::new(&all_regexes) {
-                    Ok(regexes) => StringPredicate::Combined {
-                        simple: Box::new(simple),
-                        regexes,
-                        require_all_regexes: true,
+                    Ok(set) => StringPredicate::Regexes {
+                        set,
+                        require_all: true,
                     },
                     Err(e) => {
                         tracing::warn!("Failed to compile regex patterns: {}", e);

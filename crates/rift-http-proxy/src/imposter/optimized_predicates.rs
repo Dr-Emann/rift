@@ -156,7 +156,7 @@ impl MaybeSensitiveStr {
 /// Optimized string predicate that can handle simple operations or multiple regexes.
 ///
 /// This enum allows us to use fast string operations for simple cases and RegexSet
-/// for complex cases involving multiple regex patterns.
+/// for regex patterns.
 #[derive(Debug, Clone)]
 pub enum StringPredicate {
     /// Simple string operations (starts_with, ends_with, contains).
@@ -178,13 +178,6 @@ pub enum StringPredicate {
         set: RegexSet,
         /// True if all regexes must match (AND), false if any can match (OR)
         require_all: bool,
-    },
-    /// A combination of simple operations AND regexes.
-    /// All simple operations must match, and the regex set must match according to require_all.
-    Combined {
-        simple: Box<StringPredicate>,
-        regexes: RegexSet,
-        require_all_regexes: bool,
     },
     /// A predicate that never matches.
     /// Used when regex compilation fails or predicates are invalid.
@@ -250,23 +243,6 @@ impl StringPredicate {
             StringPredicate::Regexes { set, require_all } => {
                 let matches = set.matches(value);
                 if *require_all {
-                    matches.matched_all()
-                } else {
-                    matches.matched_any()
-                }
-            }
-            StringPredicate::Combined {
-                simple,
-                regexes,
-                require_all_regexes,
-            } => {
-                // Both simple and regexes must match
-                if !simple.matches(value) {
-                    return false;
-                }
-
-                let matches = regexes.matches(value);
-                if *require_all_regexes {
                     matches.matched_all()
                 } else {
                     matches.matched_any()
