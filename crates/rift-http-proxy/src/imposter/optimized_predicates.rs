@@ -35,6 +35,58 @@ use regex::{Regex, RegexSet};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap as StdHashMap;
 
+/// A pre-built substring matcher using memchr's optimized memmem algorithm.
+///
+/// This struct stores both the needle string and a pre-built Finder for efficient
+/// repeated substring searches. The Finder is created once during construction
+/// and reused for all searches.
+#[derive(Debug, Clone)]
+pub struct ContainsMatcher {
+    // Box to heap-allocate the needle so it doesn't move when ContainsMatcher is moved
+    needle: Box<str>,
+    // The Finder holds a pointer to the needle bytes
+    // SAFETY: The needle is heap-allocated via Box, so moving ContainsMatcher
+    // only moves the pointer, not the actual string data. The Finder's pointer
+    // remains valid as long as we own the Box.
+    finder: memmem::Finder<'static>,
+}
+
+impl ContainsMatcher {
+    /// Create a new ContainsMatcher for the given needle string.
+    pub fn new(needle: String) -> Self {
+        let boxed_needle: Box<str> = needle.into_boxed_str();
+        let needle_bytes: &[u8] = boxed_needle.as_bytes();
+
+        // SAFETY: We're extending the lifetime to 'static. This is safe because:
+        // 1. The needle is heap-allocated in a Box
+        // 2. Moving this struct only moves the Box pointer, not the heap data
+        // 3. The Finder's internal pointer to the needle bytes remains valid
+        // 4. The needle lives as long as this struct
+        let finder = unsafe {
+            std::mem::transmute::<memmem::Finder<'_>, memmem::Finder<'static>>(memmem::Finder::new(
+                needle_bytes,
+            ))
+        };
+
+        Self {
+            needle: boxed_needle,
+            finder,
+        }
+    }
+
+    /// Check if the haystack contains this needle using the pre-built finder.
+    #[inline]
+    pub fn is_contained_in(&self, haystack: &str) -> bool {
+        self.finder.find(haystack.as_bytes()).is_some()
+    }
+
+    /// Get the needle pattern.
+    #[inline]
+    pub fn needle(&self) -> &str {
+        &self.needle
+    }
+}
+
 /// A string with optional ASCII case-insensitive matching.
 ///
 /// For ASCII case-insensitive matching, compares bytes directly without allocation.
@@ -99,22 +151,6 @@ impl MaybeSensitiveStr {
             value[value.len() - self.s.len()..].eq_ignore_ascii_case(&self.s)
         }
     }
-
-    /// Check if a value contains this pattern (case-sensitive only).
-    ///
-    /// Uses memchr::memmem for optimized substring search.
-    /// For case-insensitive substring matching, use a regex with (?i) flag instead.
-    #[inline]
-    pub fn contained_in(&self, value: &str) -> bool {
-        // Only support case-sensitive contains
-        assert!(
-            self.ascii_case_sensitive,
-            "Case-insensitive contains not supported; use regex with (?i) flag"
-        );
-
-        // Use memchr's optimized substring search
-        memmem::find(value.as_bytes(), self.s.as_bytes()).is_some()
-    }
 }
 
 /// Optimized string predicate that can handle simple operations or multiple regexes.
@@ -130,9 +166,8 @@ pub enum StringPredicate {
         starts_with: Option<MaybeSensitiveStr>,
         /// Optional ends_with check
         ends_with: Option<MaybeSensitiveStr>,
-        /// Optional contains checks (can have multiple)
-        /// Using Vec for simplicity; could optimize to single value for common case
-        contains: Vec<MaybeSensitiveStr>,
+        /// Pre-built substring matchers for case-sensitive contains checks
+        contains: Vec<ContainsMatcher>,
         /// Optional equals check
         equals: Option<MaybeSensitiveStr>,
     },
@@ -203,9 +238,9 @@ impl StringPredicate {
                     }
                 }
 
-                // Check all contains
-                for c in contains {
-                    if !c.contained_in(value) {
+                // Check all contains using pre-built finders
+                for matcher in contains {
+                    if !matcher.is_contained_in(value) {
                         return false;
                     }
                 }
@@ -258,9 +293,10 @@ impl StringPredicate {
     }
 
     /// Add a contains constraint to a Simple predicate.
-    pub fn with_contains(mut self, pattern: MaybeSensitiveStr) -> Self {
+    /// Creates a pre-built ContainsMatcher for efficient substring searching.
+    pub fn with_contains(mut self, needle: String) -> Self {
         if let StringPredicate::Simple { contains, .. } = &mut self {
-            contains.push(pattern);
+            contains.push(ContainsMatcher::new(needle));
         }
         self
     }

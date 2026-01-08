@@ -102,7 +102,7 @@ impl StringPredicateBuilder {
 
                 // Only add case-sensitive contains (case-insensitive are converted to regex)
                 for pattern in case_sensitive_contains {
-                    pred = pred.with_contains(MaybeSensitiveStr::new(pattern, true));
+                    pred = pred.with_contains(pattern);
                 }
 
                 if let Some((pattern, case_sensitive)) = self.equals {
@@ -139,7 +139,7 @@ impl StringPredicateBuilder {
 
                 // Only add case-sensitive contains
                 for pattern in case_sensitive_contains {
-                    simple = simple.with_contains(MaybeSensitiveStr::new(pattern, true));
+                    simple = simple.with_contains(pattern);
                 }
 
                 if let Some((pattern, case_sensitive)) = self.equals {
